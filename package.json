@@ -1,0 +1,49 @@
+{
+  "name": "magpie-muse-web",
+  "version": "0.4.0",
+  "description": "Magpie provider plugin for muse.ai: sign in to each account in a browser window, use Muse Spark with tool calls in Codex, OpenCode and other agents, and see each account's weekly usage",
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": "./index.mjs",
+  "files": [
+    "index.mjs",
+    "engine/",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test contract.test.mjs \"test/*.test.mjs\""
+  },
+  "keywords": [
+    "magpie",
+    "magpie-plugin",
+    "opencode",
+    "opencode-plugin",
+    "muse",
+    "muse-ai",
+    "muse-spark"
+  ],
+  "author": "JohnWang (https://github.com/JohnWangggg)",
+  "license": "MIT",
+  "homepage": "https://github.com/JohnWangggg/magpie-muse-web#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JohnWangggg/magpie-muse-web.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JohnWangggg/magpie-muse-web/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "magpie": {
+    "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjNkQ1QkZGIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjRTI1NDlBIi8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTUiIGZpbGw9InVybCgjZykiLz48cGF0aCBkPSJNMTQgNDdWMjFsMTIuNSAxNUwzOSAyMXYyNiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjYuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PHBhdGggZD0iTTQ5LjUgOS41bDIuMyA2LjIgNi4yIDIuMy02LjIgMi4zLTIuMyA2LjItMi4zLTYuMi02LjItMi4zIDYuMi0yLjN6IiBmaWxsPSIjZmZmIi8+PC9zdmc+",
+    "maxConcurrency": 1
+  }
+}
