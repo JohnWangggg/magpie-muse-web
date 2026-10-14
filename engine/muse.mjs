@@ -195,14 +195,26 @@ export function usageCard(meters, now = Date.now()) {
   return { plan, windows }
 }
 
+// The page's own words for a VM it is not connected to, in English and in its zh_CN strings.
+const CONNECTING = /Connecting\.\.\.|正在连接/
+const STUCK = /Still sending|仍在发送中|Connecting\.\.\.|正在连接/
+
 const READY_JS = `(function(){
   if (document.readyState !== 'complete') return 'loading';
   if (!document.querySelector('textarea')) return 'no-ta';
   var h = document.querySelector('[data-hatch-shell-hydration-state]');
   if (h && h.getAttribute('data-hatch-shell-hydration-state') !== 'hydrated') return 'hydrating';
   var b = document.body ? (document.body.innerText || '') : '';
-  if (b.indexOf('Connecting...') !== -1) return 'connecting';
+  if (${CONNECTING}.test(b)) return 'connecting';
   return 'ready';
+})()`
+
+const STOP_JS = `(function(){
+  var b = document.querySelector('[data-testid="hatch-composer-stop-button"]')
+    || document.querySelector('button[aria-label*="Stop" i]')
+    || document.querySelector('button[aria-label*="停止"]');
+  if (b) b.click();
+  return !!b;
 })()`
 
 const NEEDS_NAV_JS = (forChat) => `(function(forChat){
@@ -215,7 +227,7 @@ const NEEDS_NAV_JS = (forChat) => `(function(forChat){
     || document.querySelector('button[aria-label*="Stop" i]')
     || document.querySelector('button[aria-label*="停止"]'));
   var bodyTxt = document.body ? (document.body.innerText || '') : '';
-  var hasStuck = bodyTxt.indexOf('Still sending') !== -1 || bodyTxt.indexOf('Connecting...') !== -1;
+  var hasStuck = ${STUCK}.test(bodyTxt);
   if (hasStop) return 'stop-button';
   if (hasStuck) return 'stuck';
   if (hasAtts) return 'attachments';
@@ -223,18 +235,9 @@ const NEEDS_NAV_JS = (forChat) => `(function(forChat){
   return ((window.location.pathname !== '/thread/new') || bubbleCount > 0) ? 'not-new' : '';
 })(${forChat ? "true" : "false"})`
 
-const FRESH_JS = `(function(){
-  return document.readyState === 'complete'
-    && !!document.querySelector('textarea')
-    && document.querySelectorAll('div[class*="hatch-chat-groupable-bubble"]').length === 0;
-})()`
-
 const POLL_JS = `(function(){
-  var els=[...document.querySelectorAll('*')].filter(function(e){
-    var s=getComputedStyle(e);
-    return (s.overflowY==='auto'||s.overflowY==='scroll')&&e.scrollHeight>e.clientHeight+100;});
-  els.sort(function(a,b){return b.scrollHeight-a.scrollHeight;});
-  if(els[0])els[0].scrollTop=els[0].scrollHeight;
+  var scroller=document.querySelector('[class*="hatch-chat-scroll"],[class*="chat-scroll"]');
+  if(scroller&&scroller.scrollHeight>scroller.clientHeight+40) scroller.scrollTop=scroller.scrollHeight;
   var scope=document.querySelector('main,[class*="chat-scroll"],[class*="hatch-chat-scroll"]')||document.body;
   var bs=[].slice.call(scope.querySelectorAll('div[class*="hatch-chat-groupable-bubble"]'))
     .filter(function(b){return /hatch-agent-bubble-bg/.test(b.className||'');});
@@ -276,7 +279,6 @@ const NOTICE_JS = `(function(){
 })()`
 // muse.ai's own wording ("已用完使用额度" is its zh_CN string) and muse2api's list.
 const QUOTA_SPENT = /已用完使用额度|额度不足|积分不足|达到上限|out of credits|usage limit|reached your (?:weekly )?limit|token limit/i
-const WARM = "\u0000warm" // the spare tab a warm-up opens, handed to the next new conversation
 const ZERO_WIDTH = /[\u200b-\u200d\u2060\ufeff]/g
 // a line that is so far only a list marker, heading mark or fence: the page may restyle it away
 const UNSETTLED_TAIL = /(^|\n)[ \t]*(?:[-*+>#]+|\d+[.)]|`{1,3})?[ \t]*$/
@@ -314,9 +316,10 @@ export class Muse {
     firstTokenMs = 90_000,
     chatTimeoutMs = 300_000,
     loadMs = 30_000,
-    maxTabs = 3,
     onCookies = () => {},
+    onLost = () => {},
   }) {
+    this.onLost = onLost
     this.site = site.replace(/\/+$/, "")
     this.host = new URL(this.site).hostname
     this.opts = { executable, profileDir, headless, hidden, proxy }
@@ -325,8 +328,6 @@ export class Muse {
     this.chatTimeoutMs = chatTimeoutMs
     this.loadMs = loadMs
     this.onCookies = onCookies
-    this.maxTabs = maxTabs
-    // account id → {contextId, tabs: Map(conversation → {page, used, at}), lastRenew, warming}
     this.accounts = new Map()
     // account id → {at, plan, windows}; survives the browser closing, read again when it runs
     this.usage = new Map()
@@ -404,44 +405,75 @@ export class Muse {
     }
   }
 
+  // A browser whose connection dropped (sleep, a crash, someone quitting Chrome) is let go
+  // with its contexts and tabs, so the next request starts a new one instead of failing.
   start() {
-    this.started ??= launchBrowser({ ...this.opts }).catch((err) => {
-      this.started = null
+    if (this.started) return this.started
+    const started = launchBrowser({ ...this.opts }).then((b) => {
+      const lost = (why) => {
+        if (this.started !== started) return
+        this.drop()
+        this.onLost(why)
+        b.close().catch(() => {})
+      }
+      b.browser.onClose(() => lost("connection closed"))
+      b.proc.once("exit", () => lost("browser exited"))
+      return b
+    }, (err) => {
+      if (this.started === started) this.started = null
       throw new GenerationError(`浏览器启动失败: ${err.message}`)
     })
-    return this.started
+    this.started = started
+    return started
+  }
+
+  drop() {
+    for (const a of this.accounts.values()) a.home?.page.close()
+    this.accounts.clear()
+    this.started = null
   }
 
   async stop() {
     const running = await this.started?.catch(() => null)
-    for (const a of this.accounts.values()) for (const t of a.tabs.values()) t.page.close()
-    this.accounts.clear()
-    this.started = null
+    this.drop()
     await running?.close()
   }
 
-  // Whether the account has a page open in a running browser, and how many conversations.
+  // Whether the account's page is open and connected in a running browser, and how many
+  // conversations it holds threads for.
   state(accountId) {
     const a = this.accounts.get(accountId)
-    const tabs = a ? [...a.tabs.values()].filter((t) => !t.page.closed).length : 0
-    return { ready: !!(this.started && a?.contextId && tabs), tabs }
+    const open = !!(a?.home && !a.home.page.closed)
+    return { ready: !!(this.started && a?.contextId && open), tabs: a ? a.threads.size : 0 }
   }
 
+  // account id → {contextId, home: the one chat page, threads: conversation → thread path,
+  // current: the conversation the page shows, lastRenew, opening, renewing, dead}
   acct(accountId) {
     let a = this.accounts.get(accountId)
     if (!a) {
-      a = { contextId: null, tabs: new Map(), lastRenew: 0, warming: null }
+      a = { contextId: null, home: null, threads: new Map(), current: null, lastRenew: 0, opening: null }
       this.accounts.set(accountId, a)
     }
     return a
   }
 
-  // Drops the account's whole browser context: its cookies, storage and every tab.
+  async closeHome(a) {
+    const h = a.home
+    a.home = null
+    a.current = null
+    if (!h) return
+    h.page.close()
+    const { browser } = await this.start()
+    await browser.send("Target.closeTarget", { targetId: h.targetId }).catch(() => {})
+  }
+
+  // Drops the account's whole browser context: its cookies, storage and its page.
   async closeAccount(accountId) {
     const a = this.accounts.get(accountId)
     if (!a) return
-    for (const t of a.tabs.values()) t.page.close()
-    a.tabs.clear()
+    await this.closeHome(a)
+    a.threads.clear()
     if (a.contextId) {
       const { browser } = await this.start()
       await browser.send("Target.disposeBrowserContext", { browserContextId: a.contextId }).catch(() => {})
@@ -449,15 +481,12 @@ export class Muse {
     a.contextId = null
   }
 
-  // Closes one conversation's tab; the account's context (and its VM connection) stays.
+  // Forgets one conversation's thread: its next message starts a new thread with the whole history.
   async closeTab(accountId, key = "") {
     const a = this.accounts.get(accountId)
-    const t = a?.tabs.get(key)
-    if (!t) return
-    a.tabs.delete(key)
-    t.page.close()
-    const { browser } = await this.start()
-    await browser.send("Target.closeTarget", { targetId: t.targetId }).catch(() => {})
+    if (!a) return
+    a.threads.delete(key)
+    if (a.current === key) a.current = null
   }
 
   async setCookies(browser, contextId, cookies, expires) {
@@ -490,119 +519,183 @@ export class Muse {
   // Cookies are renewed every 10 minutes and written into the context.
   async context(account) {
     const a = this.acct(account.id)
-    const { browser } = await this.start()
-    let { cookies, cookies_exp: exp } = account
-    let renewed = false
-    if (Date.now() - a.lastRenew > 600_000) {
-      try {
-        const r = await renewSession(this.site, cookies, exp, { fetchImpl: this.fetchImpl })
-        cookies = r.cookies
-        exp = r.cookies_exp
-        a.lastRenew = Date.now()
-        renewed = true
-        this.onCookies(account.id, cookies, exp, r.vm)
-      } catch (err) {
-        if (err instanceof AuthError) {
-          await this.closeAccount(account.id)
-          throw err
-        }
-      }
+    if (a.dead) {
+      const err = a.dead
+      a.dead = null
+      await this.closeAccount(account.id)
+      throw err
     }
+    const { browser } = await this.start()
+    const due = Date.now() - a.lastRenew > 600_000
     if (!a.contextId) {
+      let { cookies, cookies_exp: exp } = account
+      if (due) ({ cookies, exp } = await this.renewCookies(account, a, browser, cookies, exp))
       const ctx = await browser.send("Target.createBrowserContext", { disposeOnDetach: false })
       a.contextId = ctx.browserContextId
       await this.setCookies(browser, a.contextId, cookies, exp)
-    } else if (renewed) {
-      await this.setCookies(browser, a.contextId, cookies, exp)
+    } else if (due && !a.renewing) {
+      // A kept page already has working cookies; refreshing them must not hold up the reply.
+      const { cookies, cookies_exp: exp } = account
+      a.renewing = this.renewCookies(account, a, browser, cookies, exp, { closeOnAuth: false })
+        .finally(() => { a.renewing = null })
     }
     return a
   }
 
+  // Renews cookies and writes them into the context when it already exists.
+  // closeOnAuth: a first open closes the context at once; a refresh beside a live chat only marks it.
+  async renewCookies(account, a, browser, cookies, exp, { closeOnAuth = true } = {}) {
+    try {
+      const r = await renewSession(this.site, cookies, exp, { fetchImpl: this.fetchImpl })
+      a.lastRenew = Date.now()
+      this.onCookies(account.id, r.cookies, r.cookies_exp, r.vm)
+      if (a.contextId) await this.setCookies(browser, a.contextId, r.cookies, r.cookies_exp)
+      return { cookies: r.cookies, exp: r.cookies_exp }
+    } catch (err) {
+      if (err instanceof AuthError) {
+        if (!closeOnAuth) a.dead = err
+        else await this.closeAccount(account.id)
+        if (closeOnAuth) throw err
+      }
+      return { cookies, exp }
+    }
+  }
+
   async openTab(account, a) {
     const { browser, port } = await this.start()
-    const { targetId } = await browser.send("Target.createTarget", { url: "about:blank", browserContextId: a.contextId })
+    // The page starts loading before the debugger attaches, so a cold open overlaps the handshake.
+    const { targetId } = await browser.send("Target.createTarget", {
+      url: `${this.site}/thread/new`,
+      browserContextId: a.contextId,
+      background: true,
+    })
     const page = await CDP.connect(`ws://127.0.0.1:${port}/devtools/page/${targetId}`, { timeoutMs: 180_000 })
-    await page.send("Network.enable")
-    await page.send("Page.enable")
-    await page.send("Runtime.enable")
-    await page.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => {})
-    await page.send("Page.navigate", { url: `${this.site}/thread/new` })
-    const end = Date.now() + this.loadMs
-    while (Date.now() < end) {
-      await sleep(150)
-      if (await page.js("!!document.querySelector('textarea')").catch(() => false)) {
-        await this.waitReady(page, 15_000)
-        return { page, targetId, used: false, at: Date.now() }
+    await Promise.all([
+      page.send("Network.enable"),
+      page.send("Page.enable"),
+      page.send("Runtime.enable"),
+      page.send("Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => {}),
+    ])
+    const readyBy = async (ms) => {
+      const end = Date.now() + ms
+      while (Date.now() < end) {
+        await sleep(80)
+        if ((await page.js(READY_JS).catch(() => "")) === "ready") return true
       }
+      return false
     }
-    const body = String((await page.js("document.body ? document.body.innerText.slice(0,1200) : ''").catch(() => "")) || "").toLowerCase()
+    if (await readyBy(this.loadMs)) return { page, targetId, used: false, at: Date.now() }
+    const body = String((await page.js("document.body ? document.body.innerText.slice(0,1200) : ''").catch(() => "")) || "")
+    // A VM that is still connecting gets one more window; anything else has already failed.
+    if (/connecting\.\.\.|正在连接|正在预热|warming up/i.test(body) && (await readyBy(this.loadMs))) {
+      return { page, targetId, used: false, at: Date.now() }
+    }
     page.close()
     await browser.send("Target.closeTarget", { targetId }).catch(() => {})
-    if (SIGNED_OUT.test(body)) {
+    if (SIGNED_OUT.test(body.toLowerCase())) {
       await this.closeAccount(account.id)
       throw new AuthError("会话已被 muse.ai 登出，需要重新登录")
     }
     throw new GenerationError("muse.ai 页面加载超时（没出现聊天输入框）；未确认登录失效")
   }
 
-  // The tab for one conversation of this account; each conversation keeps its own thread.
-  // fresh: this conversation has nothing on the page yet.
-  async tab(account, key = "") {
+  // The account's one chat page, kept open so its connection to the VM stays up: a new page or
+  // a reload has to connect again, 10–40 s, where moving between threads inside it takes 0.5 s.
+  async home(account) {
     const a = await this.context(account)
-    let t = a.tabs.get(key)
-    if (t && !t.page.closed && (await t.page.js("!!document.querySelector('textarea')").catch(() => false))) {
-      t.at = Date.now()
-      return { tab: t, fresh: !t.used, how: "kept" }
-    }
-    const lost = t ? (t.page.closed ? "lost:closed" : "lost:no-input") : ""
-    if (t) await this.closeTab(account.id, key)
-    const spare = a.tabs.get(WARM)
-    let how = "new"
-    if (spare && !spare.used && !spare.page.closed) {
-      a.tabs.delete(WARM)
-      t = spare
-      how = "spare"
-    } else {
-      t = await this.openTab(account, a)
-    }
-    if (lost) how = `${how}(${lost})`
-    t.at = Date.now()
-    a.tabs.set(key, t)
-    while (a.tabs.size > this.maxTabs) {
-      const [oldest] = [...a.tabs].filter(([k]) => k !== key).sort((x, y) => x[1].at - y[1].at)[0]
-      await this.closeTab(account.id, oldest)
-    }
-    return { tab: t, fresh: true, how }
+    const h = a.home
+    if (h && !h.page.closed && (await h.page.js("!!document.querySelector('textarea')").catch(() => false))) return "kept"
+    a.opening ??= (async () => {
+      const lost = a.home ? (a.home.page.closed ? "lost:closed" : "lost:no-input") : ""
+      await this.closeHome(a)
+      a.home = await this.openTab(account, a)
+      return lost ? `new(${lost})` : "new"
+    })().finally(() => { a.opening = null })
+    return a.opening
   }
 
-  // Moves the page to a new thread when it has to; returns why, or false.
-  async resetThread(page, forChat) {
-    try {
-      const why = await page.js(NEEDS_NAV_JS(forChat))
-      if (!why) return false
-      await page.send("Page.navigate", { url: `${this.site}/thread/new` })
-      const end = Date.now() + 10_000
-      while (Date.now() < end) {
-        await sleep(80)
-        if (await page.js(FRESH_JS).catch(() => false)) break
+  // Shows path in the page. Next.js's router keeps the page and its VM connection; a page
+  // without it is loaded again. An existing thread counts as shown once its bubbles stop changing.
+  async go(page, path) {
+    const how = await page.js(`(function(p){
+      var n = document.querySelectorAll('div[class*="hatch-chat-groupable-bubble"]').length;
+      if (location.pathname === p) return (p === '/thread/new' && n) ? 'none' : 'here';
+      var r = window.next && window.next.router;
+      if (r && typeof r.push === 'function') { r.push(p); return 'router'; }
+      return 'none';
+    })(${JSON.stringify(path)})`).catch(() => "none")
+    if (how === "none") await page.send("Page.navigate", { url: `${this.site}${path}` })
+    const fresh = path === "/thread/new"
+    const end = Date.now() + (how === "none" ? this.loadMs : 10_000)
+    let last = -1
+    let still = 0
+    while (Date.now() < end) {
+      await sleep(how === "here" ? 0 : 60)
+      const s = JSON.parse((await page.js(`(function(){return JSON.stringify({p:location.pathname,
+        ta:!!document.querySelector('textarea'),
+        n:document.querySelectorAll('div[class*="hatch-chat-groupable-bubble"]').length})})()`).catch(() => "null")) || "null")
+      if (!s || s.p !== path || !s.ta) continue
+      if (fresh ? s.n === 0 : s.n > 0) {
+        still = s.n === last ? still + 1 : 0
+        last = s.n
+        if (fresh || still >= 3) return (await this.waitReady(page, 15_000)) ? how : false
       }
-      await this.waitReady(page, 12_000)
-      return why
-    } catch {
-      return false
     }
+    return false
+  }
+
+  // Puts the page on this conversation's thread when it can continue there, otherwise on a new
+  // thread. Returns {how, continues}: continues means only the latest message needs sending.
+  async thread(a, page, conversation, continuing) {
+    let why = await page.js(NEEDS_NAV_JS(true)).catch(() => "")
+    if (why === "stop-button") {
+      // a reply left running (the caller went away): stop it, keeping the page
+      await page.js(STOP_JS).catch(() => {})
+      for (let i = 0; i < 40 && why === "stop-button"; i++) {
+        await sleep(100)
+        why = await page.js(NEEDS_NAV_JS(true)).catch(() => "")
+      }
+    }
+    if (why === "stop-button" || why === "stuck") {
+      // a reply still running or a page that lost its VM: only a reload gets it back
+      a.current = null
+      await page.send("Page.navigate", { url: `${this.site}/thread/new` })
+      if (!(await this.go(page, "/thread/new"))) throw new GenerationError("muse.ai 页面重新加载后没有就绪")
+      return { how: `reset(${why})`, continues: false }
+    }
+    const path = conversation && a.threads.get(conversation)
+    if (continuing && path) {
+      const how = await this.go(page, path)
+      const after = how && (await page.js(NEEDS_NAV_JS(true)).catch(() => ""))
+      if (how && !after) {
+        a.current = conversation
+        return { how: how === "here" ? "same" : "back", continues: true }
+      }
+      a.threads.delete(conversation)
+    }
+    if (!(await this.go(page, "/thread/new"))) {
+      await page.send("Page.navigate", { url: `${this.site}/thread/new` })
+      if (!(await this.go(page, "/thread/new"))) throw new GenerationError("muse.ai 没能打开新对话")
+    }
+    a.current = conversation || null
+    return { how: "new-thread", continues: false }
+  }
+
+  // The thread muse.ai gave this conversation once it answered, to come back to later.
+  async remember(a, page, conversation) {
+    if (!conversation) return
+    const p = await page.js("location.pathname").catch(() => "")
+    if (/^\/thread\/[^/]+$/.test(p) && p !== "/thread/new") a.threads.set(conversation, p)
   }
 
   async send(page, prompt) {
     await page.js(`(function(){var ta=document.querySelector('textarea');if(ta){ta.scrollIntoView({block:'center',inline:'nearest'});ta.focus();}})()`).catch(() => {})
-    await sleep(100)
     const rect = await page.js("(function(){var t=document.querySelector('textarea');if(!t)return null;var r=t.getBoundingClientRect();return JSON.stringify({x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)});})()")
     if (!rect) throw new GenerationError("找不到聊天输入框")
     const c = JSON.parse(rect)
     for (const type of ["mousePressed", "mouseReleased"]) {
       await page.send("Input.dispatchMouseEvent", { type, x: c.x, y: c.y, button: "left", clickCount: 1 })
     }
-    await sleep(100)
     const len = (await page.js(SETTER_JS(prompt))) || 0
     if (!len && prompt.length < 500) {
       await page.send("Input.insertText", { text: prompt })
@@ -610,10 +703,7 @@ export class Muse {
     }
     const end = Date.now() + 3000
     while (Date.now() < end) {
-      if ((await page.js(SEND_BUTTON_JS)) === "clicked") {
-        await sleep(300)
-        return "clicked"
-      }
+      if ((await page.js(SEND_BUTTON_JS)) === "clicked") return "clicked"
       await sleep(80)
     }
     for (const modifiers of [1, 0]) {
@@ -651,46 +741,38 @@ export class Muse {
     return { vmState }
   }
 
-  // Opens the account's chat page and wakes its VM ahead of the first message. A chat that
-  // arrives meanwhile waits for this and then reuses the page.
+  // Opens a spare chat page ahead of the next new conversation. A conversation that already
+  // Opens the account's page and lets it connect to the VM ahead of the first message.
   warm(account) {
-    const a = this.acct(account.id)
-    a.warming ??= (async () => {
-      await this.context(account)
-      if (![...a.tabs.values()].some((t) => !t.used && !t.page.closed)) a.tabs.set(WARM, await this.openTab(account, a))
-      return true
-    })().finally(() => { a.warming = null })
-    return a.warming
+    return this.home(account).then(() => true)
   }
 
-  // A sign-in counts once the account has answered: a short message in a tab of its own,
-  // closed after the first text. Throws as chat does (AuthError, QuotaError, GenerationError).
+  // A sign-in counts once the account has answered a short message, in a thread of its own.
+  // The whole reply is waited for, so the page is free again afterwards.
+  // Throws as chat does (AuthError, QuotaError, GenerationError).
   async verify(account) {
     try {
-      for await (const delta of this.chat(account, { full: VERIFY_PROMPT, last: VERIFY_PROMPT, turns: 1 }, { conversation: VERIFY })) {
-        if (delta.trim()) return
-      }
-      throw new GenerationError("测试消息没有得到回复")
+      let said = ""
+      for await (const delta of this.chat(account, { full: VERIFY_PROMPT, last: VERIFY_PROMPT, turns: 1 }, { conversation: VERIFY })) said += delta
+      if (!said.trim()) throw new GenerationError("测试消息没有得到回复")
     } finally {
       await this.closeTab(account.id, VERIFY).catch(() => {})
     }
   }
 
   // Yields text deltas for one conversation on the named account. prompt is {full, last}: last
-  // is sent only when the caller says the conversation continues and its tab still holds it.
+  // is sent only when the conversation continues and the page can go back to its thread.
   // timing, when given, gets tabMs (getting the page ready) and firstMs (send → first text).
   async *chat(account, prompt, { conversation = "", continuing = false, signal, timing = {} } = {}) {
     const t0 = Date.now()
-    await this.accounts.get(account.id)?.warming?.catch(() => {})
-    const { tab, fresh, how } = await this.tab(account, conversation)
-    timing.how = how
-    const page = tab.page
+    timing.how = await this.home(account)
+    const a = this.accounts.get(account.id)
+    const page = a.home.page
     await page.send("Page.bringToFront").catch(() => {})
-    const moved = await this.resetThread(page, true)
-    if (moved) timing.how += `+reset(${moved})`
-    const text = continuing && !fresh && !moved && prompt.last ? prompt.last : prompt.full
+    const { how, continues } = await this.thread(a, page, conversation, continuing)
+    timing.how += `+${how}`
+    const text = continues && prompt.last ? prompt.last : prompt.full
     timing.sent = text === prompt.full ? "full" : "last"
-    tab.used = true
     timing.tabMs = Date.now() - t0
     const base = await this.poll(page)
     await this.send(page, text)
@@ -717,11 +799,15 @@ export class Muse {
         if (Date.now() - lastNotice > 2000) {
           lastNotice = Date.now()
           const notice = String((await page.js(NOTICE_JS).catch(() => "")) || "")
-          if (QUOTA_SPENT.test(notice)) throw new QuotaError("muse.ai 说这个账号的使用额度用完了")
+          if (QUOTA_SPENT.test(notice)) {
+            // the notice may stay on the page; a spent account opens a clean one when it is used again
+            await this.closeHome(a)
+            throw new QuotaError("muse.ai 说这个账号的使用额度用完了")
+          }
         }
         if (Date.now() - sentAt > 14_000) {
           const tail = String((await page.js("document.body.innerText.slice(-500)").catch(() => "")) || "")
-          if (tail.includes("Still sending") || tail.includes("Connecting...")) throw new GenerationError("云端 VM 连接超时 (Still sending)")
+          if (STUCK.test(tail)) throw new GenerationError("云端 VM 连接超时（页面一直显示正在发送或正在连接）")
         }
         continue
       }
@@ -731,6 +817,7 @@ export class Muse {
         last = txt
         got = true
         timing.firstMs = Date.now() - sentAt
+        await this.remember(a, page, conversation)
         yield delta
         break
       }
@@ -754,6 +841,7 @@ export class Muse {
       } else {
         stable += 1
         if ((!stop && stable >= 3) || (stop && stable >= 80)) {
+          await this.remember(a, page, conversation)
           const tail = flush()
           if (tail) yield tail
           return

@@ -28,6 +28,7 @@ export class CDP {
     this.nextId = 0
     this.pending = new Map()
     this.closed = false
+    this.closers = []
     ws.addEventListener("message", (ev) => {
       let msg
       try {
@@ -44,6 +45,7 @@ export class CDP {
     })
     ws.addEventListener("close", () => {
       this.closed = true
+      for (const fn of this.closers.splice(0)) fn()
       for (const waiter of this.pending.values()) {
         clearTimeout(waiter.timer)
         waiter.reject(new CDPError(`${waiter.method}: connection closed`))
@@ -68,6 +70,12 @@ export class CDP {
   async js(expression, { awaitPromise = false, timeoutMs } = {}) {
     const r = await this.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise }, timeoutMs)
     return r.result && "value" in r.result ? r.result.value : undefined
+  }
+
+  // Called once when the socket goes away, whoever closed it.
+  onClose(fn) {
+    if (this.closed) fn()
+    else this.closers.push(fn)
   }
 
   close() {

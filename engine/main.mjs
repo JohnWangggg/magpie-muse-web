@@ -46,6 +46,7 @@ const muse = new Muse({
   proxy,
   fetchImpl,
   onCookies: (id, cookies, exp, vm) => store.update(id, cookies, exp, vm),
+  onLost: (why) => log(`${new Date().toTimeString().slice(0, 8)} browser lost (${why}) — a new one starts with the next request`),
 })
 const logins = new Logins({
   site,
@@ -82,20 +83,23 @@ const logins = new Logins({
   },
 })
 
-// One account at a time, so a cold start does not open every page at once.
+// All accounts at once: each page spends its ~10 s waiting on its own VM, not on this machine,
+// and Magpie may send the first message to any of them. Usage is read after, one at a time.
 async function warm(handles) {
-  for (const handle of handles) {
+  const ready = await Promise.all(handles.map(async (handle) => {
     const account = store.get(handle)
-    if (!account) continue
+    if (!account) return null
     const t0 = Date.now()
     try {
       await muse.warm(account)
       log(`${new Date().toTimeString().slice(0, 8)} warm account=${handle} ${Date.now() - t0}ms`)
-      await readUsage(account)
+      return account
     } catch (err) {
       log(`${new Date().toTimeString().slice(0, 8)} warm account=${handle} failed reason=${err.message}`)
+      return null
     }
-  }
+  }))
+  for (const account of ready) if (account) await readUsage(account)
 }
 
 async function readUsage(account, maxAgeMs = 0) {

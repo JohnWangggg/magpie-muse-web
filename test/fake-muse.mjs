@@ -9,8 +9,10 @@ const CHAT = `<!doctype html><html><head><meta charset="utf-8"><title>muse</titl
 <body><nav style="position:fixed;left:0;top:0;bottom:0;width:56px"><button aria-label="Search">s</button>
 <button id="menu" aria-label="Settings" style="position:absolute;bottom:8px;left:8px">≡</button></nav>
 <div data-hatch-shell-hydration-state="server" style="margin-left:120px"><main id="m"></main>
-<textarea></textarea><span id="c"></span></div><div id="pop"></div>
+<textarea></textarea><span id="c"></span><span id="conn">正在连接…</span></div><div id="pop"></div>
 <script>
+// Like muse.ai in zh_CN: the page says it is connecting to the VM until it is.
+setTimeout(()=>document.getElementById('conn').remove(),900);
 // Settings as muse.ai has it: the rail's bottom button opens a menu, its last item a dialog
 // whose Usage section draws each meter as a labelled progressbar.
 const pop=document.getElementById('pop');
@@ -30,14 +32,27 @@ onEnter(document.getElementById('menu'),()=>{
 }
 const m=document.getElementById('m'), ta=document.querySelector('textarea'), c=document.getElementById('c');
 let n=0;
+// Threads as muse.ai's Next.js app has them: the first message of /thread/new gives the thread
+// its own path, and the router moves between threads without loading the page again.
+const threads={};
+let cur=null;
+window.next={router:{push(p){
+  if(cur)threads[cur]=[...m.children];
+  m.replaceChildren();
+  const id=(p.match(/^\\/thread\\/(?!new$)([^/]+)$/)||[])[1];
+  cur=id&&threads[id]?id:null;
+  history.pushState({},'',p);
+  setTimeout(()=>{if(cur&&location.pathname===p)m.replaceChildren(...threads[cur])},150);
+}}};
 function button(){c.innerHTML='<button aria-label="Send">Send</button>';c.firstChild.onclick=go}
 button();
 function bubble(cls,text){const d=document.createElement('div');d.className='hatch-chat-groupable-bubble '+cls;d.style.whiteSpace='pre-wrap';d.textContent=text;m.appendChild(d);return d}
 async function go(){
   const t=ta.value; if(!t) return; ta.value=''; n++;
+  if(!cur){cur='t'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);history.replaceState({},'','/thread/'+cur)}
   await fetch('/record',{method:'POST',body:t});
   bubble('hatch-user-bubble-bg',t);
-  if(/QUOTA:/.test(t)){const d=document.createElement('div');d.textContent='已用完使用额度';document.body.appendChild(d);button();return}
+  if(/QUOTA:/.test(t)){const d=document.createElement('div');d.textContent='已用完使用额度';m.appendChild(d);button();return}
   c.innerHTML='<button data-testid="hatch-composer-stop-button" aria-label="Stop">■</button>';
   const reply=/BARETOOL:/.test(t)?'{"name": "shell", "arguments": {"command": "pwd && ls -la"}}':/TOOLCALL:/.test(t)?'好的，我来看一下。\\n<tool_call>{"name": "shell", "arguments": {"command": "ls -la"}}</tool_call>':(t.match(/REPLY:(\\S+)/)||[])[1]||('第'+n+'轮 收到 '+t.length+' 字');
   const delay=Number((t.match(/DELAY:(\\d+)/)||[])[1]||300);
@@ -90,7 +105,7 @@ export async function startFakeMuse({ loginDelayMs = 600 } = {}) {
       state.wakeCalls++
       return res.end("{}")
     }
-    if (url.pathname === "/thread/new") {
+    if (url.pathname.startsWith("/thread/")) {
       state.pageLoads++
       // Like muse.ai: the gateway and VM cookies arrive only once the chat page loads.
       const headers = { "content-type": "text/html; charset=utf-8" }

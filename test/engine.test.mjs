@@ -234,7 +234,7 @@ describe("engine against a fake muse.ai in a real browser", { skip: executable ?
     muse = new Muse({ site: fake.site, executable, profileDir: path.join(dir, "browser"), headless: true, proxy: "direct", onCookies: (id, c, e) => store.update(id, c, e) })
     logins = new Logins({ site: fake.site, executable, dir: path.join(dir, "login"), proxy: "direct", headless: true, everyMs: 300, onDone: (c, e, label, vm) => store.add(c, e, label, vm) })
     const port = await freePort()
-    server = createServer({ muse, logins, store, key, port, site: fake.site })
+    server = createServer({ muse, logins, store, key, port, site: fake.site, log: (l) => process.env.MW_DEBUG && console.error(l) })
     await new Promise((r) => server.listen(port, "127.0.0.1", r))
     base = `http://127.0.0.1:${port}`
   })
@@ -380,6 +380,18 @@ describe("engine against a fake muse.ai in a real browser", { skip: executable ?
     assert.equal(fake.state.pageLoads, loads)
   })
 
+  test("conversations share the account's one page: new threads and going back never load it again", async () => {
+    const ask = async (session, messages) => sse(await call("/v1/chat/completions", { session, body: { messages } }))
+    assert.equal(await ask("p1", [{ role: "user", content: "REPLY:一号" }]), "一号")
+    const home = muse.accounts.get(good).home.targetId
+    assert.equal(await ask("p2", [{ role: "user", content: "REPLY:二号" }]), "二号")
+    const p1 = [{ role: "user", content: "REPLY:一号" }, { role: "assistant", content: "一号" }, { role: "user", content: "REPLY:一号又来" }]
+    assert.equal(await ask("p1", p1), "一号又来")
+    assert.equal(fake.state.prompts.at(-1), "REPLY:一号又来")
+    assert.equal(muse.accounts.get(good).home.targetId, home)
+    assert.equal(muse.state(good).ready, true)
+  })
+
   test("an account muse.ai says is used up is 429 at once, so Magpie moves on", async () => {
     const t0 = Date.now()
     const res = await call("/v1/chat/completions", { session: "q1", body: { messages: [{ role: "user", content: "QUOTA: hi" }] } })
@@ -481,9 +493,22 @@ describe("engine against a fake muse.ai in a real browser", { skip: executable ?
     }
   })
 
-  test("verify: the account answers a short message in a tab that is closed afterwards", async () => {
+  test("verify: the account answers a short message in a thread that is forgotten afterwards", async () => {
     await muse.verify(store.get(good))
     assert.match(fake.state.prompts.at(-1), /连通测试/)
-    assert.ok(![...muse.accounts.get(good).tabs.keys()].includes("\u0000verify"))
+    assert.ok(!muse.accounts.get(good).threads.has("\u0000verify"))
+  })
+
+  // Drops every tab, so it runs last.
+  test("a browser whose connection dropped is replaced by the next request", async () => {
+    const first = await muse.start()
+    first.browser.ws.close()
+    await new Promise((r) => first.browser.onClose(r))
+    assert.equal(muse.started, null)
+    const res = await call("/v1/chat/completions", { session: "b1", body: { messages: [{ role: "user", content: "REPLY:又连上了" }] } })
+    assert.equal(await sse(res), "又连上了")
+    assert.notEqual((await muse.start()).proc.pid, first.proc.pid)
+    const old = first.proc
+    if (old.exitCode === null && old.signalCode === null) await new Promise((r) => old.once("exit", r))
   })
 })
