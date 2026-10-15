@@ -60,6 +60,12 @@ export function browserArgs({ port, profileDir, headless, hidden = false, proxy,
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-background-networking",
+    // Each engine browser starts on a new profile; without these Chrome downloads its components
+    // and on-device models (about 100 MB) into every one of them.
+    "--disable-component-update",
+    "--disable-features=OptimizationGuideModelDownloading,OptimizationHintsFetching,OptimizationTargetPrediction,OptimizationHints,Translate,MediaRouter",
+    "--disable-sync",
+    "--disable-domain-reliability",
     "--disable-dev-shm-usage",
     "--autoplay-policy=no-user-gesture-required",
     "--window-size=1280,900",
