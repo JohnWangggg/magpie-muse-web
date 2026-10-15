@@ -1,6 +1,6 @@
 // Find and start a Chromium-family browser on macOS, Windows or Linux.
 import { spawn } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync } from "node:fs"
 import { rm } from "node:fs/promises"
 import { createServer } from "node:net"
 import path from "node:path"
@@ -78,13 +78,43 @@ export function browserArgs({ port, profileDir, headless, hidden = false, proxy,
   return args
 }
 
+// Whether a Chrome is still using this profile. On macOS and Linux its SingletonLock is a
+// symlink to "host-pid"; Windows keeps the profile's files open, so removing it fails there.
+function inUse(dir) {
+  try {
+    const pid = Number(readlinkSync(path.join(dir, "SingletonLock")).split("-").pop())
+    if (!(pid > 0)) return false
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return err.code === "EPERM"
+  }
+}
+
+// Removes the temporary profiles of browsers that are gone: an engine killed outright or a
+// power cut skips the cleanup on close. The list is read before returning, so a profile made
+// after the call is never touched; the removal itself runs on in the background.
+export function sweepProfiles(root) {
+  let names = []
+  try {
+    names = readdirSync(root).filter((n) => n.startsWith("run-"))
+  } catch {
+    return Promise.resolve()
+  }
+  return Promise.all(names.map((n) => path.join(root, n)).filter((dir) => !inUse(dir))
+    .map((dir) => rm(dir, { recursive: true, force: true }).catch(() => {})))
+}
+
 export async function launchBrowser({ executable, profileDir, temporary = false, headless = true, hidden = false, proxy = "", url, port, waitMs = 30_000 }) {
   if (!executable) throw new Error("没找到 Chrome、Edge 或 Chromium；装一个，或用 MUSE_WEB_CHROME 指定路径")
   mkdirSync(profileDir, { recursive: true })
   port ??= await freePort()
   // Cookies are restored from the account store. A fresh profile also isolates us
   // from a browser left alive by a crashed engine or an asynchronous shutdown.
-  if (temporary) profileDir = mkdtempSync(path.join(profileDir, "run-"))
+  if (temporary) {
+    sweepProfiles(profileDir)
+    profileDir = mkdtempSync(path.join(profileDir, "run-"))
+  }
   const cleanup = async () => {
     if (temporary) await rm(profileDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch(() => {})
   }

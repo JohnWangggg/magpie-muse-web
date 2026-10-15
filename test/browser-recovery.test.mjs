@@ -1,10 +1,10 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { existsSync, mkdtempSync, readdirSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, symlinkSync } from "node:fs"
 import { rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { findBrowser, launchBrowser } from "../engine/browser.mjs"
+import { findBrowser, launchBrowser, sweepProfiles } from "../engine/browser.mjs"
 import { Muse } from "../engine/muse.mjs"
 
 const executable = findBrowser()
@@ -28,6 +28,29 @@ test("a browser left in the legacy profile cannot block a new engine", { skip: !
     await muse.stop()
     await old?.close()
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+  }
+})
+
+test("leftover temporary profiles are removed unless a live browser holds them", { skip: process.platform === "win32" && "symlinks need extra rights on Windows" }, async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "mw-sweep-"))
+  const profile = (name, pid) => {
+    const dir = path.join(root, name)
+    mkdirSync(path.join(dir, "Default"), { recursive: true })
+    if (pid) symlinkSync(`${os.hostname()}-${pid}`, path.join(dir, "SingletonLock"))
+    return dir
+  }
+  try {
+    const gone = profile("run-gone", 2_147_000_000)
+    const unlocked = profile("run-unlocked")
+    const live = profile("run-live", process.pid)
+    const other = profile("legacy-keep")
+    await sweepProfiles(root)
+    assert.equal(existsSync(gone), false)
+    assert.equal(existsSync(unlocked), false)
+    assert.equal(existsSync(live), true)
+    assert.equal(existsSync(other), true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
   }
 })
 
