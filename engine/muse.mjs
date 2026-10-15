@@ -409,7 +409,7 @@ export class Muse {
   // with its contexts and tabs, so the next request starts a new one instead of failing.
   start() {
     if (this.started) return this.started
-    const started = launchBrowser({ ...this.opts }).then((b) => {
+    const started = launchBrowser({ ...this.opts, temporary: true }).then((b) => {
       const lost = (why) => {
         if (this.started !== started) return
         this.drop()
