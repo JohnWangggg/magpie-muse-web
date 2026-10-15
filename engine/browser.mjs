@@ -1,6 +1,7 @@
 // Find and start a Chromium-family browser on macOS, Windows or Linux.
 import { spawn } from "node:child_process"
-import { existsSync, mkdirSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync } from "node:fs"
+import { rm } from "node:fs/promises"
 import { createServer } from "node:net"
 import path from "node:path"
 import { CDP, httpJSON } from "./cdp.mjs"
@@ -77,41 +78,57 @@ export function browserArgs({ port, profileDir, headless, hidden = false, proxy,
   return args
 }
 
-export async function launchBrowser({ executable, profileDir, headless = true, hidden = false, proxy = "", url, port, waitMs = 30_000 }) {
+export async function launchBrowser({ executable, profileDir, temporary = false, headless = true, hidden = false, proxy = "", url, port, waitMs = 30_000 }) {
   if (!executable) throw new Error("没找到 Chrome、Edge 或 Chromium；装一个，或用 MUSE_WEB_CHROME 指定路径")
   mkdirSync(profileDir, { recursive: true })
-  for (const lock of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) {
-    rmSync(path.join(profileDir, lock), { force: true })
-  }
   port ??= await freePort()
-  const proc = spawn(executable, browserArgs({ port, profileDir, headless, hidden, proxy, url }), {
-    stdio: "ignore",
-    windowsHide: headless || hidden,
-  })
+  // Cookies are restored from the account store. A fresh profile also isolates us
+  // from a browser left alive by a crashed engine or an asynchronous shutdown.
+  if (temporary) profileDir = mkdtempSync(path.join(profileDir, "run-"))
+  const cleanup = async () => {
+    if (temporary) await rm(profileDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch(() => {})
+  }
+  let proc
+  try {
+    proc = spawn(executable, browserArgs({ port, profileDir, headless, hidden, proxy, url }), {
+      stdio: "ignore",
+      windowsHide: headless || hidden,
+    })
+  } catch (err) {
+    await cleanup()
+    throw err
+  }
   let exited = false
+  let spawnError = null
+  proc.on("error", (err) => { spawnError = err })
   proc.on("exit", () => { exited = true })
+  let closing
+  const close = (browser) => closing ??= stopBrowser(proc, browser).finally(cleanup)
   const started = Date.now()
   let last = null
   while (Date.now() - started < waitMs) {
-    if (exited) throw new Error("browser exited during start")
+    if (spawnError || exited) {
+      await close()
+      throw spawnError || new Error("browser exited during start")
+    }
     try {
       const v = await httpJSON(`http://127.0.0.1:${port}/json/version`, 1500)
       if (v?.webSocketDebuggerUrl) {
         const browser = await CDP.connect(v.webSocketDebuggerUrl)
-        return { proc, port, browser, close: () => stopBrowser(proc, browser) }
+        return { proc, port, browser, profileDir, close: () => close(browser) }
       }
     } catch (err) {
       last = err
     }
     await new Promise((r) => setTimeout(r, 250))
   }
-  stopBrowser(proc)
+  await close()
   throw new Error(`browser did not open its debugging port: ${last?.message ?? "timeout"}`)
 }
 
 // Resolves once the process is gone: asked politely first, killed after 3 s.
 export function stopBrowser(proc, browser) {
-  if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve()
+  if (!proc.pid || proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve()
   const gone = new Promise((resolve) => proc.once("exit", resolve))
   try {
     browser?.send("Browser.close", {}, 3000).catch(() => {})
