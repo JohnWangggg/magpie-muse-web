@@ -7,7 +7,9 @@ import { randomUUID } from "node:crypto"
 import { CDP } from "./cdp.mjs"
 import { launchBrowser } from "./browser.mjs"
 
-export const ESSENTIAL = ["hatch_sess", "hatch_gw", "hatch_vml", "hatch_native_auth_device"]
+// Cookies a sign-in must have before it counts. hatch_gw is a gateway cache (muse2api 1.6.3):
+// saved when the page sets it, not required.
+export const ESSENTIAL = ["hatch_sess", "hatch_vml", "hatch_native_auth_device"]
 
 export class AuthError extends Error {}
 export class GenerationError extends Error {}
@@ -146,10 +148,11 @@ function settingsButton() {
   return true
 }
 
-// In that menu, Settings is the item with the "⌘," / "Ctrl+," shortcut.
-function settingsItem() {
+// In that menu, Settings is the item with the "⌘," / "Ctrl+," shortcut, or the one labelled
+// Settings / 设置 / 設定 when the shortcut is not part of the text.
+export function settingsItem() {
   const items = [...document.querySelectorAll('[role="menuitem"]')]
-  const it = items.find((e) => /,\s*$/.test((e.innerText || "").trim())) || items.find((e) => /设置|settings/i.test(e.innerText || ""))
+  const it = items.find((e) => /,\s*$/.test((e.innerText || "").trim())) || items.find((e) => /设置|設定|settings/i.test(e.innerText || ""))
   if (!it) return false
   it.focus()
   return true
@@ -181,9 +184,9 @@ export function usageCard(meters, now = Date.now()) {
     const [, note = "", detail = ""] = m.texts || []
     const resets = resetDate(note, now)
     const left = detail.match(/[（(]([^）)]+)[）)]/)?.[1] || ""
-    const weekly = /每周|weekly|week/i.test(note)
-    const daily = /每日|每天|daily|day/i.test(note) && !weekly
-    const extra = !resets && (/额外|extra|additional/i.test(m.name) || /不过期|never/i.test(note))
+    const weekly = /每(?:周|週|星期)|weekly|\bweek\b/i.test(note)
+    const daily = /每[日天]|daily|\bday\b/i.test(note) && !weekly
+    const extra = !resets && (/额外|額外|extra|additional/i.test(m.name) || /不[过過]期|never/i.test(note))
     if (!plan && resets) plan = m.name
     windows.push({
       name: weekly ? "每周" : daily ? "每日" : extra ? "额外额度" : m.name,

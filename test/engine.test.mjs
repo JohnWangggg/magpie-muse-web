@@ -8,7 +8,7 @@ import os from "node:os"
 import path from "node:path"
 import { browserArgs, findBrowser, freePort } from "../engine/browser.mjs"
 import { Logins, noDesktop } from "../engine/login.mjs"
-import { expiryMs, labelOf, Muse, parseSetCookies, resetDate, settle, usageCard } from "../engine/muse.mjs"
+import { ESSENTIAL, expiryMs, labelOf, Muse, parseSetCookies, resetDate, settingsItem, settle, usageCard } from "../engine/muse.mjs"
 import { parseToolCalls, toolsPrompt } from "../engine/tools.mjs"
 import { VERSION } from "../engine/version.mjs"
 import { parseScutil, parseWinProxy, resolveProxy } from "../engine/net.mjs"
@@ -171,6 +171,41 @@ describe("pure parts", () => {
       { name: "每周", used: 37, resetsAt: new Date(2026, 9, 15).toISOString() },
       { name: "额外额度", used: 0, display: "剩余 10 亿个词元" },
     ])
+    // Traditional Chinese, as muse.ai's zh_HK settings page writes it (muse2api 1.6.2).
+    const traditional = usageCard([
+      { name: "免費計劃", used: 7, texts: ["免費計劃", "每星期上限會於 10月30日重設", "已用 7%"] },
+      { name: "額外的符元", used: 0, texts: ["額外的符元", "永不過期", "已使用 0%（剩餘 20 億個憑證）"] },
+    ], now)
+    assert.equal(traditional.plan, "免費計劃")
+    assert.deepEqual(traditional.windows, [
+      { name: "每周", used: 7, resetsAt: new Date(2026, 9, 30).toISOString() },
+      { name: "额外额度", used: 0, display: "剩餘 20 億個憑證" },
+    ])
+    assert.equal(usageCard([{ name: "免費方案", used: 1, texts: ["免費方案", "每週上限會於 10月15日重設", "已用 1%"] }], now).windows[0].name, "每周")
+  })
+
+  test("the settings menu item is recognized in English and both Chinese scripts", () => {
+    const items = []
+    const document = { querySelectorAll: () => items }
+    const previous = globalThis.document
+    globalThis.document = document
+    const item = (text) => ({ innerText: text, focused: false, focus() { this.focused = true } })
+    try {
+      items.push(item("設定"))
+      assert.equal(settingsItem(), true)
+      assert.equal(items[0].focused, true)
+      items[0] = item("Settings")
+      assert.equal(settingsItem(), true)
+      items[0] = item("键盘快捷键")
+      assert.equal(settingsItem(), false)
+    } finally {
+      if (previous === undefined) delete globalThis.document
+      else globalThis.document = previous
+    }
+  })
+
+  test("a sign-in is complete without the gateway cookie", () => {
+    assert.deepEqual(ESSENTIAL, ["hatch_sess", "hatch_vml", "hatch_native_auth_device"])
   })
 
   test("signing in again to an account already kept renews it under its handle and name", () => {
