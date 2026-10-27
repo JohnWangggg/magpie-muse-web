@@ -7,9 +7,10 @@ import { randomUUID } from "node:crypto"
 import { CDP } from "./cdp.mjs"
 import { launchBrowser } from "./browser.mjs"
 
-// Cookies a sign-in must have before it counts. hatch_gw is a gateway cache (muse2api 1.6.3):
-// saved when the page sets it, not required.
-export const ESSENTIAL = ["hatch_sess", "hatch_vml", "hatch_native_auth_device"]
+// Cookies a sign-in must have before it counts. muse.ai used to add hatch_gw and hatch_vml
+// when the chat page opened; it no longer sends either (#2, #3). Saved when a response
+// sets them, never waited for.
+export const ESSENTIAL = ["hatch_sess", "hatch_native_auth_device"]
 
 export class AuthError extends Error {}
 export class GenerationError extends Error {}

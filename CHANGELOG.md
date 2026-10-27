@@ -1,5 +1,9 @@
 # 更新记录
 
+## 0.5.4 · 2026-10-27
+
+- 修复：muse.ai 不再下发 `hatch_gw` 和 `hatch_vml`，登录会停在「正在打开聊天页领取会话」直到超时（[#2](https://github.com/JohnWangggg/magpie-muse-web/issues/2)、[#3](https://github.com/JohnWangggg/magpie-muse-web/issues/3)）。现在有 `hatch_sess` 和 `hatch_native_auth_device` 就确认会话。这两个 cookie 以后如果又出现，仍然会保存。
+
 ## 0.5.3 · 2026-10-26
 
 - 额度卡片认繁体界面：每星期、每週、額外、永不過期，以及设置菜单里的「設定」。用量仍从进度条读取。

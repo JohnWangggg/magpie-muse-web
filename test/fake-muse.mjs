@@ -107,9 +107,8 @@ export async function startFakeMuse({ loginDelayMs = 600 } = {}) {
     }
     if (url.pathname.startsWith("/thread/")) {
       state.pageLoads++
-      // Like muse.ai: the gateway and VM cookies arrive only once the chat page loads.
+      // The chat page sets no hatch_gw or hatch_vml, as muse.ai no longer does (#2, #3).
       const headers = { "content-type": "text/html; charset=utf-8" }
-      if (signedIn) headers["set-cookie"] = ["hatch_gw", "hatch_vml"].map((n) => `${n}=good-${n}; Path=/; Max-Age=86400; HttpOnly`)
       res.writeHead(200, headers)
       return res.end(signedIn ? CHAT : SIGNED_OUT)
     }

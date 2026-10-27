@@ -204,8 +204,8 @@ describe("pure parts", () => {
     }
   })
 
-  test("a sign-in is complete without the gateway cookie", () => {
-    assert.deepEqual(ESSENTIAL, ["hatch_sess", "hatch_vml", "hatch_native_auth_device"])
+  test("a sign-in is complete with the session and device cookies alone", () => {
+    assert.deepEqual(ESSENTIAL, ["hatch_sess", "hatch_native_auth_device"])
   })
 
   test("signing in again to an account already kept renews it under its handle and name", () => {
