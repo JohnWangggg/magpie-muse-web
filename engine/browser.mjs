@@ -76,9 +76,15 @@ export function browserArgs({ port, profileDir, headless, hidden = false, proxy,
     "--password-store=basic",
   ]
   if (headless) args.push("--headless=new", "--disable-gpu")
-  else if (hidden) args.push("--window-position=-32000,-32000")
+  else {
+    // Chrome's background mode keeps a tray process on Windows that later launches hand off to;
+    // the flag also stops an engine browser from outliving the engine.
+    args.push("--disable-background-mode", "--new-window")
+    if (hidden) args.push("--window-position=-32000,-32000")
+  }
   if (proxy === "direct") args.push("--no-proxy-server")
-  else if (proxy) args.push(`--proxy-server=${proxy}`)
+  // Chrome rejects a proxy with a path: --proxy-server=http://h:1/ ends in ERR_NO_SUPPORTED_PROXIES.
+  else if (proxy) args.push(`--proxy-server=${String(proxy).replace(/\/+$/, "")}`)
   if (process.platform === "linux" && typeof process.getuid === "function" && process.getuid() === 0) args.push("--no-sandbox")
   args.push(url)
   return args
@@ -111,6 +117,16 @@ export function sweepProfiles(root) {
     .map((dir) => rm(dir, { recursive: true, force: true }).catch(() => {})))
 }
 
+const STDERR_LIMIT = 4096
+
+// Chrome's own message (a missing library, a locked profile, a rejected flag) is the only useful
+// clue when it exits before its debugging port opens; a bare "exited during start" hides all of it.
+function startFailure({ code, signal, stderr }) {
+  const status = signal ? `signal ${signal}` : `code ${code ?? "unknown"}`
+  const detail = String(stderr || "").trim().split(/\r?\n/).filter(Boolean).slice(-3).join(" | ")
+  return new Error(`browser exited during start (${status})${detail ? `: ${detail}` : ""}`)
+}
+
 export async function launchBrowser({ executable, profileDir, temporary = false, headless = true, hidden = false, proxy = "", url, port, waitMs = 30_000 }) {
   if (!executable) throw new Error("没找到 Chrome、Edge 或 Chromium；装一个，或用 MUSE_WEB_CHROME 指定路径")
   mkdirSync(profileDir, { recursive: true })
@@ -127,25 +143,42 @@ export async function launchBrowser({ executable, profileDir, temporary = false,
   let proc
   try {
     proc = spawn(executable, browserArgs({ port, profileDir, headless, hidden, proxy, url }), {
-      stdio: "ignore",
+      stdio: ["ignore", "ignore", "pipe"],
       windowsHide: headless || hidden,
     })
   } catch (err) {
     await cleanup()
     throw err
   }
+  let stderr = ""
+  proc.stderr?.setEncoding("utf8")
+  proc.stderr?.on("error", () => {})
+  proc.stderr?.on("data", (chunk) => {
+    if (stderr.length < STDERR_LIMIT) stderr += chunk
+  })
+  const stderrDone = new Promise((resolve) => {
+    if (!proc.stderr) return resolve()
+    proc.stderr.once("close", resolve)
+    proc.stderr.once("error", resolve)
+  })
   let exited = false
+  let exitInfo = {}
   let spawnError = null
   proc.on("error", (err) => { spawnError = err })
-  proc.on("exit", () => { exited = true })
+  proc.on("exit", (code, signal) => {
+    exited = true
+    exitInfo = { code, signal }
+  })
   let closing
   const close = (browser) => closing ??= stopBrowser(proc, browser).finally(cleanup)
   const started = Date.now()
   let last = null
   while (Date.now() - started < waitMs) {
     if (spawnError || exited) {
+      // Let the last stderr chunks arrive before closing: the exit event can come first.
+      if (exited) await Promise.race([stderrDone, new Promise((r) => setTimeout(r, 200))])
       await close()
-      throw spawnError || new Error("browser exited during start")
+      throw spawnError || startFailure({ ...exitInfo, stderr })
     }
     try {
       const v = await httpJSON(`http://127.0.0.1:${port}/json/version`, 1500)

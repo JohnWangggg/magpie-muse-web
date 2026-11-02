@@ -1,5 +1,11 @@
 # 更新记录
 
+## 0.5.5 · 2026-11-02
+
+- 修复：代理环境变量末尾带斜杠（如 `https_proxy=http://127.0.0.1:7897/`）时，`--proxy-server` 里的斜杠让 Chrome 丢弃代理，登录窗口打不开 muse.ai 并报 `ERR_NO_SUPPORTED_PROXIES`（[#4](https://github.com/JohnWangggg/magpie-muse-web/issues/4)）。代理 URL 现在统一去掉尾部斜杠，环境变量、`MUSE_WEB_PROXY` 和系统代理都一样。
+- 修复：Windows 上 Chrome 在启动阶段退出时只报 `browser exited during start`，看不到真正原因（[#5](https://github.com/JohnWangggg/magpie-muse-web/issues/5)）。现在错误里带上退出码（或信号）和 Chrome 自己写到 stderr 的最后几行；窗口模式还加了 `--disable-background-mode` 和 `--new-window`，避免后台常驻的 Chrome 接手新实例后立即退出。
+- 登录资料目录里的临时 Chrome 进程不再留在后台：引擎关掉窗口时一并退出。
+
 ## 0.5.4 · 2026-10-27
 
 - 修复：muse.ai 不再下发 `hatch_gw` 和 `hatch_vml`，登录会停在「正在打开聊天页领取会话」直到超时（[#2](https://github.com/JohnWangggg/magpie-muse-web/issues/2)、[#3](https://github.com/JohnWangggg/magpie-muse-web/issues/3)）。现在有 `hatch_sess` 和 `hatch_native_auth_device` 就确认会话。这两个 cookie 以后如果又出现，仍然会保存。

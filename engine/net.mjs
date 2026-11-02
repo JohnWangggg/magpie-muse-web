@@ -4,10 +4,13 @@ import { execFileSync } from "node:child_process"
 
 const ENV_NAMES = ["https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"]
 
+// Chrome reads --proxy-server as host:port after the scheme and rejects a trailing slash
+// (ERR_NO_SUPPORTED_PROXIES). A proxy URL has no path, so drop trailing slashes here, once.
 function asUrl(value) {
   const v = String(value || "").trim()
   if (!v) return ""
-  return /^[a-z][\w+.-]*:\/\//i.test(v) ? v : `http://${v}`
+  const url = /^[a-z][\w+.-]*:\/\//i.test(v) ? v : `http://${v}`
+  return url.replace(/\/+$/, "")
 }
 
 export function parseScutil(out) {
@@ -27,7 +30,7 @@ export function parseWinProxy(enable, server) {
   const parts = Object.fromEntries(s.split(";").map((p) => p.split("=").map((x) => x.trim())))
   if (parts.https) return asUrl(parts.https)
   if (parts.http) return asUrl(parts.http)
-  if (parts.socks) return `socks5://${parts.socks}`
+  if (parts.socks) return asUrl(`socks5://${parts.socks}`)
   return ""
 }
 

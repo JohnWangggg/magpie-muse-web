@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, symlinkSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, symlinkSync, writeFileSync } from "node:fs"
 import { rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -49,6 +49,25 @@ test("leftover temporary profiles are removed unless a live browser holds them",
     assert.equal(existsSync(unlocked), false)
     assert.equal(existsSync(live), true)
     assert.equal(existsSync(other), true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("a browser that exits during start reports its exit code and stderr", { skip: process.platform === "win32" && "a shell script needs a POSIX host", timeout: 30_000 }, async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "mw-start-"))
+  const fake = path.join(root, "fake-browser")
+  writeFileSync(fake, "#!/bin/sh\necho 'fake-browser: no usable display' >&2\nexit 7\n", { mode: 0o755 })
+  try {
+    await assert.rejects(
+      launchBrowser({ executable: fake, profileDir: path.join(root, "browser"), temporary: true, waitMs: 5000 }),
+      (err) => {
+        assert.match(err.message, /exited during start \(code 7\)/)
+        assert.match(err.message, /no usable display/)
+        return true
+      },
+    )
+    assert.deepEqual(readdirSync(path.join(root, "browser")), [])
   } finally {
     await rm(root, { recursive: true, force: true })
   }

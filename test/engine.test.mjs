@@ -108,12 +108,17 @@ describe("pure parts", () => {
     assert.equal(resolveProxy({ MUSE_WEB_PROXY: "direct", HTTPS_PROXY: "http://p:1" }, "linux", none), "direct")
     assert.equal(resolveProxy({ MUSE_WEB_PROXY: "127.0.0.1:6154" }, "linux", none), "http://127.0.0.1:6154")
     assert.equal(resolveProxy({ HTTPS_PROXY: "http://p:1" }, "darwin", none), "http://p:1")
+    // Chrome drops a proxy whose --proxy-server value has a trailing slash (ERR_NO_SUPPORTED_PROXIES).
+    assert.equal(resolveProxy({ HTTPS_PROXY: "http://127.0.0.1:7897/" }, "darwin", none), "http://127.0.0.1:7897")
+    assert.equal(resolveProxy({ MUSE_WEB_PROXY: "127.0.0.1:7897/" }, "linux", none), "http://127.0.0.1:7897")
+    assert.equal(resolveProxy({ ALL_PROXY: "socks5://p:1///" }, "linux", none), "socks5://p:1")
     const scutil = "<dictionary> {\n  HTTPEnable : 1\n  HTTPPort : 6154\n  HTTPProxy : 127.0.0.1\n  HTTPSEnable : 1\n  HTTPSPort : 6154\n  HTTPSProxy : 127.0.0.1\n}"
     assert.equal(resolveProxy({}, "darwin", () => scutil), "http://127.0.0.1:6154")
     assert.equal(resolveProxy({}, "linux", none), "direct")
     assert.equal(parseScutil("HTTPSEnable : 0\nHTTPSProxy : x"), "")
     assert.equal(parseWinProxy("0x1", "127.0.0.1:7890"), "http://127.0.0.1:7890")
     assert.equal(parseWinProxy("0x1", "http=h:1;https=h:2"), "http://h:2")
+    assert.equal(parseWinProxy("0x1", "socks=h:3/"), "socks5://h:3")
     assert.equal(parseWinProxy("0x0", "127.0.0.1:7890"), "")
   })
 
@@ -121,6 +126,11 @@ describe("pure parts", () => {
     const base = { port: 1, profileDir: "/p" }
     assert.ok(browserArgs({ ...base, headless: true, proxy: "direct" }).includes("--no-proxy-server"))
     assert.ok(browserArgs({ ...base, headless: false, proxy: "http://h:1" }).includes("--proxy-server=http://h:1"))
+    const slashed = browserArgs({ ...base, headless: true, proxy: "http://h:1/" })
+    assert.ok(slashed.includes("--proxy-server=http://h:1"))
+    assert.ok(!slashed.some((a) => a.startsWith("--proxy-server") && a.endsWith("/")))
+    const visible = browserArgs({ ...base, headless: false, proxy: "" })
+    assert.ok(visible.includes("--disable-background-mode") && visible.includes("--new-window"))
     const hidden = browserArgs({ ...base, headless: false, hidden: true, proxy: "" })
     assert.ok(hidden.includes("--window-position=-32000,-32000") && !hidden.some((a) => a.startsWith("--headless")))
     assert.ok(hidden.includes("--use-mock-keychain") && hidden.includes("--password-store=basic"))
