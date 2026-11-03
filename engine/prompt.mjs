@@ -35,7 +35,9 @@ export function buildPrompt(messages) {
     // The page has no tools: calls are written as the tags the model is asked for, results as text.
     if (role === "tool") {
       const name = toolNames.get(message.tool_call_id)
-      if (body) turns.push(["user", `【工具执行结果${name ? `：${name}` : ""}】\n${body}`])
+      // An empty result is still a result. Dropping it leaves the history ending on the assistant's
+      // tool call, so the engine resends the whole transcript and the model repeats itself (#7).
+      turns.push(["user", `【工具执行结果${name ? `：${name}` : ""}】\n${body || "（无输出）"}`])
       continue
     }
     if (role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length) {
@@ -48,8 +50,10 @@ export function buildPrompt(messages) {
     else turns.push([role, body])
   }
   if (!system.length && !turns.length) throw new PromptError("messages is empty")
-  const final = turns.at(-1)
-  const last = final && final[0] !== "assistant" ? final[1] : ""
+  // On a continuing thread the page already holds everything up to its last assistant turn, so
+  // last is every turn after that: parallel tool results arrive together and must all be sent.
+  const cut = turns.findLastIndex(([role]) => role === "assistant")
+  const last = turns.slice(cut + 1).map(([, body]) => body).join("\n\n")
   if (!system.length && turns.length === 1 && turns[0][0] === "user") return { full: turns[0][1], last, turns: 1 }
   const blocks = []
   if (system.length) blocks.push("背景与任务设定：\n" + system.join("\n\n"))

@@ -46,6 +46,25 @@ describe("pure parts", () => {
     assert.doesNotMatch(p.full, /danger-full-access/)
     assert.match(p.full, /助手：\n我看一下\n```tool_call\n\{"name": "ls", "arguments": \{"path":"\."\}\}\n```/)
     assert.equal(p.last, "【工具执行结果：ls】\na.txt")
+
+    const empty = buildPrompt([
+      { role: "user", content: "看看目录" },
+      { role: "assistant", content: "我看一下", tool_calls: [{ id: "c1", type: "function", function: { name: "ls", arguments: "{}" } }] },
+      { role: "tool", tool_call_id: "c1", content: "  " },
+    ])
+    assert.equal(empty.last, "【工具执行结果：ls】\n（无输出）")
+
+    // Claude Code can run tools in parallel: every result, not just the last, belongs in last.
+    const parallel = buildPrompt([
+      { role: "user", content: "看看目录" },
+      { role: "assistant", content: "", tool_calls: [
+        { id: "c1", type: "function", function: { name: "ls", arguments: "{}" } },
+        { id: "c2", type: "function", function: { name: "cat", arguments: "{}" } },
+      ] },
+      { role: "tool", tool_call_id: "c1", content: "a.txt" },
+      { role: "tool", tool_call_id: "c2", content: "b.txt" },
+    ])
+    assert.equal(parallel.last, "【工具执行结果：ls】\na.txt\n\n【工具执行结果：cat】\nb.txt")
   })
 
   test("tools: the prompt says the user's machine is not the model's own, and tool_choice is followed", () => {
@@ -357,6 +376,20 @@ describe("engine against a fake muse.ai in a real browser", { skip: executable ?
     assert.equal(bareChunks.map((c) => c.delta.content || "").join(""), "")
     assert.equal(bareChunks.flatMap((c) => c.delta.tool_calls || []).map((t) => t.function?.arguments || "").join(""), '{"command":"pwd && ls -la"}')
     await muse.closeTab(good, "t3")
+  })
+
+  test("an empty tool result is sent on its own, not as the whole history again", async () => {
+    const tools = [{ type: "function", function: { name: "shell", parameters: { type: "object", properties: { command: { type: "string" } } } } }]
+    const user = { role: "user", content: "TOOLCALL: 建个目录" }
+    await sse(await call("/v1/chat/completions", { session: "t-empty", body: { messages: [user], tools } }))
+    const assistant = { role: "assistant", content: "好的，我来看一下。", tool_calls: [{ id: "c1", type: "function", function: { name: "shell", arguments: "{\"command\":\"mkdir x\"}" } }] }
+    const tool = { role: "tool", tool_call_id: "c1", content: "" }
+    await sse(await call("/v1/chat/completions", { session: "t-empty", body: { messages: [user, assistant, tool], tools } }))
+    const sent = fake.state.prompts.at(-1)
+    assert.match(sent, /^【工具执行结果：shell】\n（无输出）/)
+    assert.doesNotMatch(sent, /^用户：\nTOOLCALL/)
+    assert.doesNotMatch(sent, /TOOLCALL: 建个目录/)
+    await muse.closeTab(good, "t-empty")
   })
 
   test("a list marker the page restyles away is not sent twice", async () => {

@@ -1,5 +1,10 @@
 # 更新记录
 
+## 0.5.6 · 2026-11-03
+
+- 修复：多轮工具调用时，空输出的工具结果（例如 `mkdir`、`mv` 这类没有 stdout 的命令）会被丢掉，引擎误以为没有新消息，把整段历史重新发进已有对话，模型于是复读上一轮内容或说“正在等待执行结果”后提前结束（[#7](https://github.com/JohnWangggg/magpie-muse-web/issues/7)）。空结果现在写成「（无输出）」照常发送。
+- 修复：同一轮并行调用多个工具时，只有最后一个结果会发给页面。现在最后一个 assistant 回复之后的所有结果按顺序一起发送。
+
 ## 0.5.5 · 2026-11-02
 
 - 修复：代理环境变量末尾带斜杠（如 `https_proxy=http://127.0.0.1:7897/`）时，`--proxy-server` 里的斜杠让 Chrome 丢弃代理，登录窗口打不开 muse.ai 并报 `ERR_NO_SUPPORTED_PROXIES`（[#4](https://github.com/JohnWangggg/magpie-muse-web/issues/4)）。代理 URL 现在统一去掉尾部斜杠，环境变量、`MUSE_WEB_PROXY` 和系统代理都一样。
