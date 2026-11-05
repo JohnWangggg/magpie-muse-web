@@ -1,5 +1,10 @@
 # 更新记录
 
+## 0.5.7 · 2026-11-05
+
+- 修复：工具调用解析过宽，模型解释或引用 `{"name":"shell",...}` 时会被当成真实调用执行，引用内容还会从回复里消失（[#8](https://github.com/JohnWangggg/magpie-muse-web/issues/8)）。现在只执行明确的 `<tool_call>`、`tool_call` 代码块，或整段回复就是该 JSON / 带 `tool_call` 标签的 JSON；正文里引用的 JSON 保持文本。
+- 修复：引擎以 detached 方式启动后不会随 Magpie 退出，关掉 Magpie 后仍在后台每 30 分钟续期、唤醒账号虚拟机（[#9](https://github.com/JohnWangggg/magpie-muse-web/issues/9)）。插件现在把 Magpie 的 pid 传给引擎，父进程消失后引擎自行退出；手动运行 `node engine/main.mjs` 不受影响。
+
 ## 0.5.6 · 2026-11-03
 
 - 修复：多轮工具调用时，空输出的工具结果（例如 `mkdir`、`mv` 这类没有 stdout 的命令）会被丢掉，引擎误以为没有新消息，把整段历史重新发进已有对话，模型于是复读上一轮内容或说“正在等待执行结果”后提前结束（[#7](https://github.com/JohnWangggg/magpie-muse-web/issues/7)）。空结果现在写成「（无输出）」照常发送。

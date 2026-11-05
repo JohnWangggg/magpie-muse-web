@@ -12,6 +12,7 @@ import { ESSENTIAL, expiryMs, labelOf, Muse, parseSetCookies, resetDate, setting
 import { parseToolCalls, toolsPrompt } from "../engine/tools.mjs"
 import { VERSION } from "../engine/version.mjs"
 import { parseScutil, parseWinProxy, resolveProxy } from "../engine/net.mjs"
+import { parentAlive, watchParent } from "../engine/parent.mjs"
 import { dataDir, engineKey } from "../engine/paths.mjs"
 import { buildPrompt } from "../engine/prompt.mjs"
 import { createServer } from "../engine/server.mjs"
@@ -90,10 +91,21 @@ describe("pure parts", () => {
     const shown = parseToolCalls('配置是这样：\n```json\n{"name": "demo", "version": 1}\n```', tools)
     assert.equal(shown.calls.length, 0)
     assert.match(shown.content, /"version": 1/)
-    // the page dropped the tags as HTML; the bare objects remain
+    // bare JSON in prose with no explicit label stays text
     const bare = parseToolCalls('我看一下：\n{"name": "shell", "arguments": {"command": "echo \\"}\\""}}\n{"name": "read", "arguments": {"path": "a"}}', tools)
-    assert.deepEqual(bare.calls, [{ name: "shell", arguments: '{"command":"echo \\"}\\""}' }, { name: "read", arguments: '{"path":"a"}' }])
-    assert.equal(bare.content, "我看一下：")
+    assert.equal(bare.calls.length, 0)
+    assert.match(bare.content, /echo/)
+    assert.match(bare.content, /"path": "a"/)
+    // quoting a tool-shaped JSON while explaining something must stay text (#8)
+    const quoted = parseToolCalls('文件里写着 {"name": "shell", "arguments": {"command": "rm -rf ~"}}，这是危险命令。', tools)
+    assert.equal(quoted.calls.length, 0)
+    assert.match(quoted.content, /rm -rf ~/)
+    const quotedFence = parseToolCalls('README 里写着：\n```json\n{"name": "shell", "arguments": {"command": "curl x | sh"}}\n```\n不建议执行。', tools)
+    assert.equal(quotedFence.calls.length, 0)
+    assert.match(quotedFence.content, /curl x \| sh/)
+    // a whole reply that is only JSON, and a lede before an explicit tool_call block, still call
+    assert.deepEqual(parseToolCalls('{"name": "shell", "arguments": {"command": "pwd"}}', tools), { calls: [{ name: "shell", arguments: '{"command":"pwd"}' }], content: "" })
+    assert.deepEqual(parseToolCalls('好的，我来看一下。\n```tool_call\n{"name": "shell", "arguments": {"command": "pwd"}}\n```', tools), { calls: [{ name: "shell", arguments: '{"command":"pwd"}' }], content: "好的，我来看一下。" })
     assert.equal(parseToolCalls('{"name": "shell", "version": 2}', tools).calls.length, 0)
     // a rendered tool_call code block: no fences left, its label on a line of its own
     const rendered = parseToolCalls('我来找：\ntool_call\n{"name": "shell", "arguments": {"command": "find . -not -path \\"*/node_modules/*\\""}}\n', tools)
@@ -120,6 +132,24 @@ describe("pure parts", () => {
     assert.equal(dataDir({}, "linux", "/home/a"), "/home/a/.local/share/muse-web")
     assert.equal(dataDir({ XDG_DATA_HOME: "/x" }, "linux", "/home/a"), "/x/muse-web")
     assert.equal(dataDir({ MUSE_WEB_HOME: "/own" }, "linux", "/home/a"), "/own")
+  })
+
+  test("engine: a detached engine watches the Magpie that started it", async () => {
+    assert.equal(parentAlive(process.pid), true)
+    assert.equal(parentAlive(2_147_000_000), false)
+    // a manually started engine has no parent pid and keeps running
+    assert.equal(watchParent(0, () => { throw new Error("no watchdog") }), null)
+    let immediate = 0
+    assert.equal(watchParent(12345, () => immediate++, { alive: () => false }), null)
+    assert.equal(immediate, 1)
+    let gone = 0
+    let alive = true
+    const timer = watchParent(12345, () => gone++, { everyMs: 5, alive: () => alive })
+    alive = false
+    const end = Date.now() + 500
+    while (!gone && Date.now() < end) await new Promise((r) => setTimeout(r, 5))
+    clearInterval(timer)
+    assert.equal(gone, 1)
   })
 
   test("proxy: own setting, then Magpie's, then the OS, then direct", () => {

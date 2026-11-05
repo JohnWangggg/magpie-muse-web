@@ -82,13 +82,18 @@ export function callsAsText(toolCalls) {
 }
 
 const TAG = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g
-const FENCE = /```(?:tool_call|json|JSON)?\s*([\s\S]*?)```/g
+const FENCE = /```([A-Za-z_]*)[ \t]*([\s\S]*?)```/g
+// A code block the page rendered without its fences keeps the language label on its own line.
+const LABEL = /(?:^|\n)[ \t]*tool_call[ \t]*\r?\n[ \t]*/g
 
-function asCall(obj, names) {
+function asCall(obj, names, requireArgs = false) {
   if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null
-  const name = obj.name || obj.tool || obj.function?.name
+  const fn = obj.function && typeof obj.function === "object" ? obj.function : null
+  const name = obj.name || obj.tool || fn?.name
   if (typeof name !== "string" || !names.has(name)) return null
-  let args = obj.arguments ?? obj.parameters ?? obj.args ?? obj.function?.arguments ?? {}
+  // Loose shapes (bare JSON) need an argument field: {"name": "shell", "version": 2} is not a call.
+  if (requireArgs && !("arguments" in obj || "parameters" in obj || "args" in obj || (fn && "arguments" in fn))) return null
+  let args = obj.arguments ?? obj.parameters ?? obj.args ?? fn?.arguments ?? {}
   if (typeof args === "string") {
     try {
       args = JSON.parse(args)
@@ -108,35 +113,10 @@ function parseJSON(raw) {
   }
 }
 
-// Each top-level {...} in text that parses as JSON, with where it lies.
-function bareObjects(text) {
-  const found = []
-  for (let i = text.indexOf("{"); i !== -1; i = text.indexOf("{", i + 1)) {
-    let depth = 0
-    let inString = false
-    for (let j = i; j < text.length; j++) {
-      const ch = text[j]
-      if (inString) {
-        if (ch === "\\") j++
-        else if (ch === '"') inString = false
-      } else if (ch === '"') inString = true
-      else if (ch === "{") depth++
-      else if (ch === "}" && --depth === 0) {
-        try {
-          found.push({ start: i, end: j + 1, value: JSON.parse(text.slice(i, j + 1)) })
-          i = j
-        } catch {}
-        break
-      }
-    }
-  }
-  return found
-}
-
-// {calls: [{name, arguments}], content} from a reply. Only names among the request's tools count,
-// so a reply that merely shows some JSON stays text. <tool_call> tags first; failing those, a
-// ```json block holding a call (or an array of them), the shape muse2api asks for; failing those,
-// a bare {"name", "arguments"} object: muse.ai's renderer drops a tag it takes for HTML.
+// {calls: [{name, arguments}], content} from a reply. Only names among the request's tools count.
+// A reply that quotes a tool-shaped JSON while explaining something is text, not a call: tags and
+// ```tool_call fences are explicit, while ```json and bare JSON count only when the whole reply is
+// that block (or a rendered tool_call label stands right before it).
 export function parseToolCalls(text, tools) {
   const names = new Set(functions(tools).map((f) => f.name))
   const calls = []
@@ -151,7 +131,12 @@ export function parseToolCalls(text, tools) {
   if (calls.length) content = text.replace(TAG, "")
   else {
     for (const m of text.matchAll(FENCE)) {
-      const parsed = parseJSON(m[1])
+      const lang = m[1].toLowerCase()
+      // Compatibility shapes are accepted only when the block is the whole reply: a JSON block
+      // inside prose is often a quotation, and executing it would run what the model only showed.
+      const whole = text.trim() === m[0].trim()
+      if (lang !== "tool_call" && !(whole && (lang === "json" || lang === ""))) continue
+      const parsed = parseJSON(m[2])
       const found = (Array.isArray(parsed) ? parsed : [parsed]).map((item) => asCall(item, names))
       if (found.length && found.every(Boolean)) {
         calls.push(...found)
@@ -160,10 +145,21 @@ export function parseToolCalls(text, tools) {
     }
   }
   if (!calls.length) {
-    const bare = bareObjects(text).filter((o) => o.value && ("arguments" in o.value || "parameters" in o.value) && asCall(o.value, names))
-    for (const o of bare.reverse()) {
-      calls.unshift(asCall(o.value, names))
-      content = content.slice(0, o.start) + content.slice(o.end)
+    const value = parseJSON(text)
+    const whole = value === undefined ? null : (Array.isArray(value) ? value : [value]).map((item) => asCall(item, names, true))
+    if (whole?.length && whole.every(Boolean)) {
+      calls.push(...whole)
+      content = ""
+    } else {
+      // The page dropped the fences of a rendered tool_call block but kept its label.
+      for (const m of text.matchAll(LABEL)) {
+        const rest = parseJSON(text.slice(m.index + m[0].length))
+        const found = rest === undefined ? null : (Array.isArray(rest) ? rest : [rest]).map((item) => asCall(item, names, true))
+        if (!found?.length || !found.every(Boolean)) continue
+        calls.push(...found)
+        content = text.slice(0, m.index + (m[0].startsWith("\n") ? 1 : 0))
+        break
+      }
     }
   }
   if (calls.length) content = stripLabels(content)

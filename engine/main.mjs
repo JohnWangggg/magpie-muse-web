@@ -1,12 +1,14 @@
 // Engine process. The plugin starts it detached with Magpie's own Bun; `node main.mjs` works too.
 // Settings (all optional): MUSE_WEB_HOME, MUSE_WEB_ENGINE_PORT, MUSE_WEB_PROXY, MUSE_WEB_BROWSER
 // (headless | hidden | show), MUSE_WEB_CHROME, MUSE_WEB_SITE, MUSE_WEB_IDLE_MIN.
+// MUSE_WEB_PARENT_PID is set by the plugin: the engine stops when that process exits.
 import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs"
 import path from "node:path"
 import { findBrowser } from "./browser.mjs"
 import { Logins } from "./login.mjs"
 import { Muse, QuotaError } from "./muse.mjs"
 import { proxiedFetch, resolveProxy } from "./net.mjs"
+import { watchParent } from "./parent.mjs"
 import { dataDir, engineKey, enginePort } from "./paths.mjs"
 import { createServer, VERSION } from "./server.mjs"
 import { Store } from "./store.mjs"
@@ -184,3 +186,6 @@ async function shutdown(why) {
 }
 
 for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => shutdown(sig))
+
+// Detached so a plugin reload or replacement does not kill it; this stops it when Magpie itself goes.
+watchParent(env.MUSE_WEB_PARENT_PID, () => shutdown("Magpie exited"))

@@ -114,7 +114,7 @@ export const MuseWebPlugin = async (_input, options) => {
         detached: true,
         stdio: "ignore",
         windowsHide: true,
-        env: { ...process.env, NODE_USE_ENV_PROXY: "1" },
+        env: { ...process.env, NODE_USE_ENV_PROXY: "1", MUSE_WEB_PARENT_PID: String(process.pid) },
       })
       child.on("error", () => {})
       child.unref()
