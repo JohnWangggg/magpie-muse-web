@@ -325,7 +325,7 @@ describe("engine against a fake muse.ai in a real browser", { skip: executable ?
     store = new Store(path.join(dir, "accounts.json"))
     good = store.add(goodCookies(), {}).handle
     expired = store.add({ ...goodCookies(), hatch_sess: "expired" }, {}).handle
-    muse = new Muse({ site: fake.site, executable, profileDir: path.join(dir, "browser"), headless: true, proxy: "direct", quietMs: 1500, onCookies: (id, c, e) => store.update(id, c, e) })
+    muse = new Muse({ site: fake.site, executable, profileDir: path.join(dir, "browser"), headless: true, proxy: "direct", quietMs: 1500, shortQuietMs: 300, onCookies: (id, c, e) => store.update(id, c, e) })
     logins = new Logins({ site: fake.site, executable, dir: path.join(dir, "login"), proxy: "direct", headless: true, everyMs: 300, onDone: (c, e, label, vm) => store.add(c, e, label, vm) })
     const port = await freePort()
     server = createServer({ muse, logins, store, key, port, site: fake.site, log: (l) => process.env.MW_DEBUG && console.error(l) })
@@ -416,6 +416,16 @@ describe("engine against a fake muse.ai in a real browser", { skip: executable ?
     assert.equal(reply.choices[0].message.content, "正在打开目录。")
     assert.equal(reply.choices[0].message.tool_calls[0].function.arguments, '{"command":"ls"}')
     await muse.closeTab(good, "pause")
+  })
+
+  test("a tool call after a long stop-button pause is not cut off", async () => {
+    const tools = [{ type: "function", function: { name: "shell", parameters: { type: "object", properties: { command: { type: "string" } } } } }]
+    const body = { stream: false, messages: [{ role: "user", content: "PAUSESTOP: 看看目录" }], tools }
+    const reply = await (await call("/v1/chat/completions", { session: "pausestop", body })).json()
+    assert.equal(reply.choices[0].finish_reason, "tool_calls")
+    assert.equal(reply.choices[0].message.content, "正在打开目录。")
+    assert.equal(reply.choices[0].message.tool_calls[0].function.arguments, '{"command":"ls"}')
+    await muse.closeTab(good, "pausestop")
   })
 
   test("an empty tool result is sent on its own, not as the whole history again", async () => {
@@ -539,7 +549,7 @@ describe("engine against a fake muse.ai in a real browser", { skip: executable ?
   test("the usage card shows the settings page's meters, the account, and whether its page is ready", async () => {
     // a chat's usage reading starts 1.5 s after it ends; let it finish before changing the page
     await new Promise((r) => setTimeout(r, 1700))
-    await muse.reading.get(good)
+    await muse.reading.get(good)?.catch(() => {})
     fake.state.usage.weekly = 37
     muse.usage.delete(good)
     const card = await (await call("/v1/usage")).json()

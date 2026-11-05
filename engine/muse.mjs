@@ -319,9 +319,11 @@ export class Muse {
     fetchImpl = fetch,
     firstTokenMs = 90_000,
     chatTimeoutMs = 300_000,
-    // A reply can pause between its progress line and its tool call, so a short quiet is not its end.
+    // A tool request can pause between its progress line and its tool call. Plain replies cannot,
+    // so the long quiet applies only when the request carries tools.
     quietMs = 4_000,
-    stopQuietMs = 30_000,
+    shortQuietMs = 500,
+    stopQuietMs = 15_000,
     loadMs = 30_000,
     onCookies = () => {},
     onLost = () => {},
@@ -334,6 +336,7 @@ export class Muse {
     this.firstTokenMs = firstTokenMs
     this.chatTimeoutMs = chatTimeoutMs
     this.quietMs = quietMs
+    this.shortQuietMs = shortQuietMs
     this.stopQuietMs = stopQuietMs
     this.loadMs = loadMs
     this.onCookies = onCookies
@@ -772,7 +775,7 @@ export class Muse {
   // Yields text deltas for one conversation on the named account. prompt is {full, last}: last
   // is sent only when the conversation continues and the page can go back to its thread.
   // timing, when given, gets tabMs (getting the page ready) and firstMs (send → first text).
-  async *chat(account, prompt, { conversation = "", continuing = false, signal, timing = {} } = {}) {
+  async *chat(account, prompt, { conversation = "", continuing = false, signal, timing = {}, expectTools = false } = {}) {
     const t0 = Date.now()
     timing.how = await this.home(account)
     const a = this.accounts.get(account.id)
@@ -837,10 +840,18 @@ export class Muse {
       if (/正在预热|warming up/i.test(body)) throw new GenerationError("muse.ai 这个账号的虚拟机还在预热，没有回答")
       throw new GenerationError("等待助手首字响应超时")
     }
+    const quiet = expectTools ? this.quietMs : this.shortQuietMs
+    let wasStop = null
     while (Date.now() < deadline) {
       if (signal?.aborted) return
       await sleep(60)
       const { txt, stop } = await this.poll(page)
+      // The quiet window starts when the page says generation ended, not at the last text change:
+      // a long silence while Stop is visible must not make the first poll without it final.
+      if (stop !== wasStop) {
+        wasStop = stop
+        if (!stop) changedAt = Date.now()
+      }
       if (!txt) continue
       if (txt !== last) {
         const { delta, sent: next } = settle(sent, txt)
@@ -848,7 +859,7 @@ export class Muse {
         if (delta) yield delta
         last = txt
         changedAt = Date.now()
-      } else if (Date.now() - changedAt >= (stop ? this.stopQuietMs : this.quietMs)) {
+      } else if (Date.now() - changedAt >= (stop ? this.stopQuietMs : quiet)) {
         await this.remember(a, page, conversation)
         const tail = flush()
         if (tail) yield tail

@@ -62,7 +62,9 @@ async function go(){
   // a list marker the page restyles away once the item text comes, as muse.ai's renderer does
   if(/RESTYLE:/.test(t)){await new Promise(r=>setTimeout(r,delay));a.textContent='清单：\\n-';await new Promise(r=>setTimeout(r,400));a.textContent='清单：\\n苹果\\n香蕉';button();return}
   // muse.ai can show a progress line, drop its stop button, and write the tool call a moment later
-  if(/PAUSETOOL:/.test(t)){await new Promise(r=>setTimeout(r,delay));a.textContent='正在打开目录。';c.innerHTML='';await new Promise(r=>setTimeout(r,800));a.textContent='正在打开目录。\\n{"name": "shell", "arguments": {"command": "ls"}}';button();return}
+  if(/PAUSETOOL:/.test(t)){await new Promise(r=>setTimeout(r,delay));a.textContent='正在打开目录。';c.innerHTML='';await new Promise(r=>setTimeout(r,800));a.textContent='正在打开目录。\\n<tool_call>{"name": "shell", "arguments": {"command": "ls"}}</tool_call>';button();return}
+  // the stop button can stay through a long silence before it disappears and the tool call follows
+  if(/PAUSESTOP:/.test(t)){await new Promise(r=>setTimeout(r,delay));a.textContent='正在打开目录。';await new Promise(r=>setTimeout(r,2000));c.innerHTML='';await new Promise(r=>setTimeout(r,800));a.textContent='正在打开目录。\\n<tool_call>{"name": "shell", "arguments": {"command": "ls"}}</tool_call>';button();return}
   await new Promise(r=>setTimeout(r,delay));
   for(let i=0;i<reply.length;i+=3){a.textContent=reply.slice(0,i+3);await new Promise(r=>setTimeout(r,40))}
   button();
