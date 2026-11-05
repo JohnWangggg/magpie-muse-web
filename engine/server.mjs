@@ -134,7 +134,7 @@ export function createServer({ muse, logins, store, key, port = 18611, log = () 
     let holding = false
     let pending = ""
     try {
-      for await (const delta of muse.chat(acct, prompt, { conversation: session, continuing, signal: ac.signal, timing })) {
+      for await (const delta of muse.chat(acct, prompt, { conversation: session, continuing, signal: ac.signal, timing, expectTools: !!toolNote })) {
         text += delta
         if (!stream || holding) continue
         let piece = delta
