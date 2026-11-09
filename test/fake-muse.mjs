@@ -63,6 +63,8 @@ async function go(){
   if(/RESTYLE:/.test(t)){await new Promise(r=>setTimeout(r,delay));a.textContent='清单：\\n-';await new Promise(r=>setTimeout(r,400));a.textContent='清单：\\n苹果\\n香蕉';button();return}
   // muse.ai can show a progress line, drop its stop button, and write the tool call a moment later
   if(/PAUSETOOL:/.test(t)){await new Promise(r=>setTimeout(r,delay));a.textContent='正在打开目录。';c.innerHTML='';await new Promise(r=>setTimeout(r,800));a.textContent='正在打开目录。\\n<tool_call>{"name": "shell", "arguments": {"command": "ls"}}</tool_call>';button();return}
+  // a generated picture: caption sits outside .prose, the image has no innerText
+  if(/IMAGE:/.test(t)){await new Promise(r=>setTimeout(r,delay));a.innerHTML='<div class="prose"></div>';const cap=document.createElement('div');cap.textContent='生成好了，这次戴上帽子了';a.appendChild(cap);const img=document.createElement('img');img.src='https://cdn.example/penguin.png';img.width=320;img.height=240;a.appendChild(img);button();return}
   // the stop button can stay through a long silence before it disappears and the tool call follows
   if(/PAUSESTOP:/.test(t)){await new Promise(r=>setTimeout(r,delay));a.textContent='正在打开目录。';await new Promise(r=>setTimeout(r,2000));c.innerHTML='';await new Promise(r=>setTimeout(r,800));a.textContent='正在打开目录。\\n<tool_call>{"name": "shell", "arguments": {"command": "ls"}}</tool_call>';button();return}
   await new Promise(r=>setTimeout(r,delay));

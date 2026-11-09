@@ -245,15 +245,43 @@ const POLL_JS = `(function(){
   var scope=document.querySelector('main,[class*="chat-scroll"],[class*="hatch-chat-scroll"]')||document.body;
   var bs=[].slice.call(scope.querySelectorAll('div[class*="hatch-chat-groupable-bubble"]'))
     .filter(function(b){return /hatch-agent-bubble-bg/.test(b.className||'');});
-  // the reply is the bubble's .prose; suggested follow-up buttons sit beside it in the same bubble
+  // The reply text is .prose, so suggested-reply buttons beside it stay out. A generated picture's
+  // caption can sit outside .prose; an empty prose falls back to the bubble text without buttons.
   function said(b){var p=b.querySelectorAll('.prose');
-    return (p.length?[].map.call(p,function(x){return x.innerText||'';}).join('\\n\\n'):(b.innerText||'')).trim();}
+    var fromProse=(p.length?[].map.call(p,function(x){return x.innerText||'';}).join('\\n\\n'):'').trim();
+    if(fromProse) return fromProse;
+    var copy=b.cloneNode(true);
+    copy.querySelectorAll('button,[role=button]').forEach(function(x){x.remove()});
+    return (copy.innerText||'').trim();}
+  function usable(src){return src && !/avatar|emoji|twemoji|favicon|icon/i.test(src)}
+  function mediaOf(b){
+    var out=[], seen={};
+    [].slice.call(b.querySelectorAll('img,video')).forEach(function(m){
+      var src=m.currentSrc||m.src||'';
+      if(!usable(src)||seen[src]) return;
+      var w=m.naturalWidth||m.videoWidth||0, h=m.naturalHeight||m.videoHeight||0;
+      if(w && h && w<64 && h<64) return;
+      seen[src]=1;
+      out.push({src:src, kind:m.tagName==='VIDEO'?'video':'image', w:w, h:h});
+    });
+    return out;
+  }
+  function pendingOf(b){
+    return [].slice.call(b.querySelectorAll('[data-testid^="hatch-chat-attachment-presentation-"]')).some(function(el){
+      var m=el.querySelector('img,video')||(el.tagName==='IMG'||el.tagName==='VIDEO'?el:null);
+      return !(m && usable(m.currentSrc||m.src||''));
+    });
+  }
+  var last=bs.length?bs[bs.length-1]:null;
+  var media=last?mediaOf(last):[];
+  var pending=!!(last && pendingOf(last));
+  var alive=bs.filter(function(b){return said(b).length>0 || mediaOf(b).length>0 || pendingOf(b);});
   var nonEmpty=bs.filter(function(b){return said(b).length>0;});
   var txt=nonEmpty.length?said(nonEmpty[nonEmpty.length-1]):'';
   var stop=!!(document.querySelector('[data-testid="hatch-composer-stop-button"]')
     ||document.querySelector('button[aria-label*="Stop" i]')
     ||document.querySelector('button[aria-label*="停止"]'));
-  return JSON.stringify({cnt:nonEmpty.length,txt:txt,stop:stop});
+  return JSON.stringify({cnt:alive.length,txt:txt,stop:stop,media:media,pending:pending});
 })()`
 
 const SETTER_JS = (text) => `(function(t){var ta=document.querySelector('textarea');
@@ -286,6 +314,16 @@ const QUOTA_SPENT = /已用完使用额度|额度不足|积分不足|达到上�
 const ZERO_WIDTH = /[\u200b-\u200d\u2060\ufeff]/g
 // a line that is so far only a list marker, heading mark or fence: the page may restyle it away
 const UNSETTLED_TAIL = /(^|\n)[ \t]*(?:[-*+>#]+|\d+[.)]|`{1,3})?[ \t]*$/
+
+// Chat Completions has no image part here: a picture the page generated goes out as markdown,
+// which is what Magpie and other clients already render. blob: URLs are converted before this.
+export function mediaMarkdown(items) {
+  return (items || []).flatMap((m) => {
+    const url = String(m?.url || m?.src || "")
+    if (!url) return []
+    return [m.kind === "video" ? `[视频](${url})` : `![](${url})`]
+  }).join("\n")
+}
 
 // The next piece of a reply to stream, given what has been sent and the bubble's text now. The
 // page restyles text while it streams (a "-" becomes a list item), so a bubble that no longer
@@ -733,10 +771,30 @@ export class Muse {
   async poll(page) {
     try {
       const d = JSON.parse((await page.js(POLL_JS)) || "{}")
-      return { cnt: Number(d.cnt) || 0, txt: String(d.txt || "").trim(), stop: !!d.stop }
+      return {
+        cnt: Number(d.cnt) || 0,
+        txt: String(d.txt || "").trim(),
+        stop: !!d.stop,
+        media: Array.isArray(d.media) ? d.media : [],
+        pending: !!d.pending,
+      }
     } catch {
-      return { cnt: 0, txt: "", stop: false }
+      return { cnt: 0, txt: "", stop: false, media: [], pending: false }
     }
+  }
+
+  // blob: URLs only exist in this browser. A client can render an https URL or a data URL.
+  async replyMedia(page, media) {
+    const items = []
+    for (const m of media || []) {
+      let url = String(m.src || "")
+      if (url.startsWith("blob:")) {
+        const read = `(async function(src){try{var r=await fetch(src);var b=await r.blob();if(!b.size||b.size>${6 << 20})return "";return await new Promise(function(res){var fr=new FileReader();fr.onload=function(){res(String(fr.result||""))};fr.onerror=function(){res("")};fr.readAsDataURL(b)})}catch(e){return ""}})(${JSON.stringify(url)})`
+        url = String(await page.js(read, { awaitPromise: true, timeoutMs: 20_000 }).catch(() => "") || "")
+      }
+      if (url) items.push({ kind: m.kind, url })
+    }
+    return mediaMarkdown(items)
   }
 
   // Renews the account's session over HTTP and wakes its VM without a page. A 200 from wake
@@ -787,6 +845,7 @@ export class Muse {
     timing.sent = text === prompt.full ? "full" : "last"
     timing.tabMs = Date.now() - t0
     const base = await this.poll(page)
+    const seenMedia = new Set((base.media || []).map((m) => m.src))
     await this.send(page, text)
     const sentAt = Date.now()
     const deadline = sentAt + this.chatTimeoutMs
@@ -796,6 +855,14 @@ export class Muse {
     let changedAt = sentAt
     let got = false
     let lastNotice = sentAt
+    let media = []
+    let pendingSince = 0
+    const takeMedia = (polled) => {
+      if (polled.cnt <= base.cnt) return
+      const fresh = (polled.media || []).filter((m) => m.src && !seenMedia.has(m.src))
+      if (fresh.length) media = fresh
+      if (polled.pending) pendingSince ||= Date.now()
+    }
     // the bubble's whole final text goes in timing.text: what was streamed may carry restyling
     const flush = () => {
       timing.text = (last || "").replace(ZERO_WIDTH, "")
@@ -803,11 +870,19 @@ export class Muse {
       sent = next.sent
       return next.delta
     }
+    const appendMedia = async () => {
+      const extra = await this.replyMedia(page, media)
+      if (extra) last = [last, extra].filter(Boolean).join("\n\n")
+    }
     while (Date.now() < firstBy) {
       if (signal?.aborted) return
       await sleep(60)
-      const { cnt, txt } = await this.poll(page)
-      if (!txt || (cnt <= base.cnt && txt === base.txt)) {
+      const polled = await this.poll(page)
+      const { cnt, txt } = polled
+      takeMedia(polled)
+      const textNew = txt && !(cnt <= base.cnt && txt === base.txt)
+      const mediaNew = cnt > base.cnt && (media.length || polled.pending)
+      if (!textNew && !mediaNew) {
         if (Date.now() - lastNotice > 2000) {
           lastNotice = Date.now()
           const notice = String((await page.js(NOTICE_JS).catch(() => "")) || "")
@@ -823,15 +898,24 @@ export class Muse {
         }
         continue
       }
-      const { delta, sent: next } = settle(sent, txt)
-      if (delta) {
-        sent = next
-        last = txt
-        changedAt = Date.now()
+      if (textNew) {
+        const { delta, sent: next } = settle(sent, txt)
+        if (delta) {
+          sent = next
+          last = txt
+          changedAt = Date.now()
+          got = true
+          timing.firstMs = Date.now() - sentAt
+          await this.remember(a, page, conversation)
+          yield delta
+          break
+        }
+      }
+      if (mediaNew) {
         got = true
-        timing.firstMs = Date.now() - sentAt
-        await this.remember(a, page, conversation)
-        yield delta
+        last = textNew ? txt : (last || "")
+        changedAt = Date.now()
+        timing.firstMs ??= Date.now() - sentAt
         break
       }
     }
@@ -845,21 +929,24 @@ export class Muse {
     while (Date.now() < deadline) {
       if (signal?.aborted) return
       await sleep(60)
-      const { txt, stop } = await this.poll(page)
+      const polled = await this.poll(page)
+      const { txt, stop } = polled
+      takeMedia(polled)
       // The quiet window starts when the page says generation ended, not at the last text change:
       // a long silence while Stop is visible must not make the first poll without it final.
       if (stop !== wasStop) {
         wasStop = stop
         if (!stop) changedAt = Date.now()
       }
-      if (!txt) continue
-      if (txt !== last) {
+      const waitingMedia = polled.cnt > base.cnt && polled.pending && Date.now() - (pendingSince || Date.now()) < 20_000
+      if (txt && txt !== last) {
         const { delta, sent: next } = settle(sent, txt)
         sent = next
         if (delta) yield delta
         last = txt
         changedAt = Date.now()
-      } else if (Date.now() - changedAt >= (stop ? this.stopQuietMs : quiet)) {
+      } else if (!waitingMedia && (txt || media.length) && Date.now() - changedAt >= (stop ? this.stopQuietMs : quiet)) {
+        await appendMedia()
         await this.remember(a, page, conversation)
         const tail = flush()
         if (tail) yield tail

@@ -8,7 +8,7 @@ import os from "node:os"
 import path from "node:path"
 import { browserArgs, findBrowser, freePort } from "../engine/browser.mjs"
 import { Logins, noDesktop } from "../engine/login.mjs"
-import { ESSENTIAL, expiryMs, labelOf, Muse, parseSetCookies, resetDate, settingsItem, settle, usageCard } from "../engine/muse.mjs"
+import { ESSENTIAL, expiryMs, labelOf, mediaMarkdown, Muse, parseSetCookies, resetDate, settingsItem, settle, usageCard } from "../engine/muse.mjs"
 import { parseToolCalls, toolsPrompt } from "../engine/tools.mjs"
 import { VERSION } from "../engine/version.mjs"
 import { parseScutil, parseWinProxy, resolveProxy } from "../engine/net.mjs"
@@ -35,6 +35,12 @@ describe("pure parts", () => {
     const shot = buildPrompt([{ role: "user", content: [{ type: "input_text", text: "看这张图" }, { type: "image_url", image_url: { url: "data:," } }] }])
     assert.equal(shot.full, "看这张图[图片]")
   })
+  test("a generated picture is markdown the client can render", () => {
+    assert.equal(mediaMarkdown([{ kind: "image", url: "https://cdn.example/penguin.png" }]), "![](https://cdn.example/penguin.png)")
+    assert.equal(mediaMarkdown([{ kind: "video", src: "https://cdn.example/a.mp4" }]), "[视频](https://cdn.example/a.mp4)")
+    assert.equal(mediaMarkdown([{ src: "" }]), "")
+  })
+
 
   test("prompt: tool results and calls are told as text; Codex's sandbox name is softened", () => {
     const p = buildPrompt([
@@ -379,6 +385,14 @@ describe("engine against a fake muse.ai in a real browser", { skip: executable ?
     assert.equal(await sse(res), "你好世界")
     assert.equal(fake.state.prompts.at(-1), "REPLY:你好世界")
   })
+  test("a picture the page generated comes back with its caption", async () => {
+    const res = await call("/v1/chat/completions", { session: "img", body: { stream: false, messages: [{ role: "user", content: "IMAGE: 企鹅" }] } })
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.choices[0].message.content, "生成好了，这次戴上帽子了\n\n![](https://cdn.example/penguin.png)")
+    await muse.closeTab(good, "img")
+  })
+
 
   test("with tools, a <tool_call> in the reply comes back as tool calls, streamed or not", async () => {
     const tools = [{ type: "function", function: { name: "shell", parameters: { type: "object", properties: { command: { type: "string" } } } } }]
