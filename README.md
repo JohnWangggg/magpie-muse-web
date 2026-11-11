@@ -22,7 +22,7 @@ muse.ai 没有公开 API。这个插件自带一个本机引擎，用一个无�
 ## 环境要求
 
 - [Magpie](https://github.com/yetone/magpie)，在 0.1.1223 上验证过。
-- 本机装有 Chrome、Edge、Chromium 或 Brave 中的任意一个。不用另装 Node 或 Python，引擎用 Magpie 自带的 Bun 运行。
+- 本机装有 Chrome、Edge、Chromium 或 Brave 中的任意一个。登录窗口只用这几种，不会调用系统默认浏览器，也不会复用你日常浏览器里已有的登录状态。Firefox 不能当登录窗口：引擎靠 Chrome DevTools Protocol 操作页面，Firefox 已不再提供。不用另装 Node 或 Python，引擎用 Magpie 自带的 Bun 运行。
 - 能访问 muse.ai 的网络。需要代理时见[设置](#设置)。
 
 ## 安装
@@ -78,8 +78,8 @@ magpie provider test muse-web          # 发一条真实的小请求，检查整
 
 ## 登录
 
-- **muse.ai（浏览器登录）**：弹出一个独立的浏览器窗口打开 muse.ai，照常登录即可，什么都不用复制。
-  登录后引擎向 muse.ai 确认会话，关掉窗口，再发一条很短的测试消息：
+- **muse.ai（浏览器登录）**：会开两个窗口。系统默认浏览器里打开的是本机进度页（`http://127.0.0.1:<端口>/login/…`），只显示进度、每 2 秒刷新，那里不能登录。真正的登录在引擎另外打开的 Chrome、Edge、Chromium 或 Brave 窗口里，打开的是 muse.ai。请在那个窗口里照常登录，什么都不用复制。
+  登录后引擎向 muse.ai 确认会话，关掉登录窗口，再发一条很短的测试消息：
   账号真的能回答，才算登录成功。账号额度已用完的也算成功，只是暂时用不了。
   账号默认以登录时间命名，例如「muse.ai 2026-10-13 14:03 登录」。
   15 分钟内没登录完，这次登录作废，并说明卡在哪一步。
@@ -170,7 +170,7 @@ muse.ai 没有公开上下文上限。按 128K 声明，是为了让客户端在
 |---|---|---|
 | `MUSE_WEB_PROXY` | 代理地址，或 `direct` 表示直连 | 依次用 `https_proxy` 等环境变量、系统代理，都没有就直连 |
 | `MUSE_WEB_BROWSER` | `headless`、`hidden`（窗口放到屏幕外）或 `show` | `headless` |
-| `MUSE_WEB_CHROME` | 浏览器可执行文件路径 | 自动查找 |
+| `MUSE_WEB_CHROME` | 登录和对话用的浏览器路径，必须是 Chromium 系；`firefox.exe` 不行 | 自动查找 Chrome、Edge、Chromium、Brave |
 | `MUSE_WEB_IDLE_MIN` | 闲置多少分钟后关浏览器 | `60` |
 | `MUSE_WEB_PREWARM` | 设为 `0` 时不预热 | 预热 |
 | `MUSE_WEB_VERIFY_LOGIN` | 设为 `0` 时登录后不发测试消息 | 发送 |
@@ -189,6 +189,7 @@ muse.ai 没有公开上下文上限。按 128K 声明，是为了让客户端在
 | 一直返回 429 | 账号正忙，或额度已用完，看卡片上的每周用量 |
 | 首字等了很久，提示虚拟机正在预热 | muse.ai 那边的虚拟机还没就绪，稍后再试 |
 | 卡片上没有百分比 | 虚拟机还在连接，2 分钟后自动重读 |
+| 登录反复不完成，账号数一直是 0 | 默认浏览器里那个页面只是进度。请在另开的 Chromium 窗口里登录，并等引擎确认会话后它自己关掉。看 `engine.log` 有没有 `verify` 或 `warm`；状态页上的错误若是 `/api/session HTTP 403`，是出口地区或代理问题，可试 `MUSE_WEB_PROXY=direct` |
 | 登录失败：「已登录，但账号没有回答测试消息」 | 会话拿到了但对话不通，常见于虚拟机还在预热，稍后重新登录 |
 | Agent 说它看不到你的文件，或让你自己运行命令 | 模型这次没按工具格式回答，重试或换种说法；日志里会是 `tools=…→text` |
 | 连不上 muse.ai | 检查网络，或用 `MUSE_WEB_PROXY` 指定代理 |
@@ -196,6 +197,7 @@ muse.ai 没有公开上下文上限。按 128K 声明，是为了让客户端在
 ## 不支持
 
 - 把图片、文件传给 muse.ai，以及单独的生图、生视频接口。聊天页自己生成的图片和视频会以链接附在回复文字后面。
+- 用 Firefox 登录：进度页可以开在默认的 Firefox 里，登录窗口不行。
 - 账号密码登录：只支持在浏览器窗口里登录。
 - Responses、Messages 接口：引擎只提供 Chat Completions，Agent 的其他接口由 Magpie 转换。
 
@@ -244,4 +246,6 @@ schedules requests across the accounts, and shows each account's weekly usage on
 Tool calls are supported through the prompt: the model writes them in `tool_call` code blocks,
 which come back as standard `tool_calls`. Install with
 `magpie plugin add github:JohnWangggg/magpie-muse-web`, then `magpie plugin login muse-web`.
-Needs Chrome, Edge, Chromium or Brave. Text only. MIT licensed.
+Sign-in opens two windows: the system browser shows a local progress page, and a separate
+Chrome, Edge, Chromium or Brave window is where you actually sign in. Firefox cannot be that window.
+Needs one of those browsers. Text only. MIT licensed.

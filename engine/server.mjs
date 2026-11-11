@@ -57,12 +57,12 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 function loginPage(state) {
   const done = state?.status === "done"
   const failed = state?.status === "failed" || !state
-  const title = done ? "登录完成" : failed ? "登录没有完成" : "等待你在弹出的浏览器窗口里登录 muse.ai"
+  const title = done ? "登录完成" : failed ? "登录没有完成" : "请到另一个浏览器窗口登录 muse.ai"
   const note = done
     ? "可以关掉这个页面，回到 Magpie。"
     : failed
       ? esc(state?.error || "找不到这次登录，请回到 Magpie 重新发起。")
-      : `${esc(state.step || "")}${state.note ? `（上一次出错：${esc(state.note)}）` : ""}。登录成功后窗口会自动关闭，这里也会自动更新。`
+      : `这个页面只显示进度，这里不能登录。请在引擎另外打开的 Chrome、Edge、Chromium 或 Brave 窗口里完成登录。${esc(state.step || "")}${state.note ? `（上一次出错：${esc(state.note)}）` : ""}。登录成功后那个窗口会自动关闭，这个页面也会更新。`
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>muse-web 登录</title>
 ${done || failed ? "" : '<meta http-equiv="refresh" content="2">'}
 <meta name="viewport" content="width=device-width,initial-scale=1">

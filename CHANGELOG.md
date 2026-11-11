@@ -1,5 +1,9 @@
 # 更新记录
 
+## 0.5.10 · 2026-11-11
+
+- 说明：登录会开两个窗口。系统默认浏览器里的是本机进度页，真正登录在引擎另开的 Chrome、Edge、Chromium 或 Brave 窗口里；不会用日常浏览器的登录态，Firefox 不能当登录窗口（[#12](https://github.com/JohnWangggg/magpie-muse-web/issues/12)）。进度页正文也写明了这一点。
+
 ## 0.5.9 · 2026-11-09
 
 - 修复：muse.ai 已经在聊天里生成了图片，引擎只读气泡里的文字，图片和写在 `.prose` 外面的说明都不会返回（[#11](https://github.com/JohnWangggg/magpie-muse-web/issues/11)）。现在把最新回复气泡里的图片、视频附在文字后面；`blob:` 地址会转成 data URL。仍不提供单独的生图、生视频接口。
