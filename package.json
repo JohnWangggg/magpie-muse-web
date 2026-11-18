@@ -13,7 +13,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test contract.test.mjs \"test/*.test.mjs\" connector/contract.test.mjs"
+    "test": "node --test --test-concurrency=1 contract.test.mjs \"test/*.test.mjs\" connector/contract.test.mjs"
   },
   "keywords": [
     "magpie",

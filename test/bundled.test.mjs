@@ -2,7 +2,8 @@
 // and chats, all against the loopback fake muse.ai. Skipped without Chrome/Edge/Chromium.
 import { after, before, test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync } from "node:fs"
+import { rm } from "node:fs/promises"
 import http from "node:http"
 import { VERSION } from "../engine/version.mjs"
 import os from "node:os"
@@ -45,7 +46,8 @@ after(async () => {
   if (skip) return
   await stopEngine()
   await fake.close()
-  rmSync(home, { recursive: true, force: true, maxRetries: 5 })
+  // Chrome may still be flushing its profile when the engine exits; retry ENOTEMPTY.
+  await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
 })
 
 async function chat(loaded, content) {
