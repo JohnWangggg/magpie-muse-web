@@ -7,9 +7,9 @@ export const DEFAULT_PORT = 18611
 
 export function dataDir(env = process.env, platform = process.platform, home = os.homedir()) {
   if (env.MUSE_WEB_HOME) return env.MUSE_WEB_HOME
-  if (platform === "darwin") return path.join(home, "Library", "Application Support", "muse-web")
+  if (platform === "darwin") return path.posix.join(home, "Library", "Application Support", "muse-web")
   if (platform === "win32") return path.win32.join(env.APPDATA || path.win32.join(home, "AppData", "Roaming"), "muse-web")
-  return path.join(env.XDG_DATA_HOME || path.join(home, ".local", "share"), "muse-web")
+  return path.posix.join(env.XDG_DATA_HOME || path.posix.join(home, ".local", "share"), "muse-web")
 }
 
 export function enginePort(env = process.env) {
