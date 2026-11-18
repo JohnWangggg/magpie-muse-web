@@ -91,6 +91,20 @@ magpie provider test muse-web          # 发一条真实的小请求，检查整
 | 浏览器 | 需要 Chrome/Edge/Chromium/Brave | 不需要 |
 | 主要风险 | 网页改版、地区/代理 | 订阅条款、非官方 API |
 
+## Connector 版
+
+如果引擎需要单独运行（服务器、多 Magpie 实例、或社区市场收录的版本），用 [`connector/`](connector/README.md)：
+
+```sh
+magpie plugin add magpie-muse-web-connector
+export MUSE_WEB_ENGINE=http://127.0.0.1:18611
+export MUSE_WEB_ENGINE_KEY="$(cat "$HOME/Library/Application Support/muse-web/engine.key")"
+magpie plugin login muse-web
+```
+
+Connector 不启动浏览器、不读 cookie、不 spawn 进程，只连接你自己运行的 `node engine/main.mjs`。
+和完整版使用同一个 provider id `muse-web`，**不要同时安装**。
+
 ## 登录
 
 - **muse.ai（浏览器登录）**：会开两个窗口。系统默认浏览器里打开的是本机进度页（`http://127.0.0.1:<端口>/login/…`），只显示进度、每 2 秒刷新，那里不能登录。真正的登录在引擎另外打开的 Chrome、Edge、Chromium 或 Brave 窗口里，打开的是 muse.ai。请在那个窗口里照常登录，什么都不用复制。

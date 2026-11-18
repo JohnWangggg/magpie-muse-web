@@ -411,6 +411,18 @@ describe("engine against a fake muse.ai in a real browser", { skip: executable ?
     assert.equal((await call("/v1/models", { auth: "wrong" })).status, 401)
   })
 
+  test("the engine lists account handles without cookies", async () => {
+    const res = await call("/v1/accounts")
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    const mine = body.accounts.find((a) => a.id === good)
+    assert.ok(mine, "the signed-in account is listed")
+    assert.equal(typeof mine.label, "string")
+    assert.equal(mine.cookies, undefined)
+    assert.equal(mine.cookies_exp, undefined)
+    assert.equal((await call("/v1/accounts", { auth: "wrong" })).status, 401)
+  })
+
   test("a chat streams the page's reply", async () => {
     const res = await call("/v1/chat/completions", { session: "s1", body: { model: "muse-spark", messages: [{ role: "user", content: "REPLY:你好世界" }] } })
     assert.equal(res.status, 200)

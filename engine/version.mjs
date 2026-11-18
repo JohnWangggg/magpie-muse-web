@@ -1,2 +1,2 @@
 // Kept equal to package.json; a running engine with another version is replaced by the plugin.
-export const VERSION = "0.6.0"
+export const VERSION = "0.6.1"

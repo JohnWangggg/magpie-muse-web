@@ -1,6 +1,6 @@
 {
   "name": "magpie-muse-web",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Magpie provider plugin for muse.ai: sign in to each account in a browser window, use Muse Spark with tool calls in Codex, OpenCode and other agents, and see each account's weekly usage",
   "type": "module",
   "main": "./index.mjs",
@@ -13,7 +13,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test contract.test.mjs \"test/*.test.mjs\""
+    "test": "node --test contract.test.mjs \"test/*.test.mjs\" connector/contract.test.mjs"
   },
   "keywords": [
     "magpie",

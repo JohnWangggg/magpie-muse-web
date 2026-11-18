@@ -1,5 +1,12 @@
 # 更新记录
 
+## 0.6.1 · 2026-11-18
+
+- 新增：引擎的 `GET /v1/accounts`，返回账号 handle、名称和过期时间，不返回 cookie；供 connector 版选择账号和诊断使用。
+- 新增：`connector/` 独立包 `magpie-muse-web-connector@0.1.0`。它不启动浏览器、不读 cookie、不 spawn 进程，只连接已运行的 `MUSE_WEB_ENGINE`；使用同一个 provider id `muse-web`。
+- 修复：`dataDir()` 在 Windows 上模拟 darwin/linux 时用 `path.join` 产生反斜杠；改用 `path.posix.join`，真实平台行为不变。
+- 测试：connector 的 6 个契约测试加入根 `npm test` 与三平台 CI。
+
 ## 0.6.0 · 2026-11-18
 
 - 修复：muse.ai 在 `/api/session` 返回 200、但没有分配 workspace 时可能同时轮换 cookie；旧实现先抛错、后解析 `Set-Cookie`，导致账号继续使用已被撤销的 cookie（移植 muse2api v1.6.11 的修复）。现在先合并并持久化 `Set-Cookie`，再把错误交给调用方。

@@ -280,6 +280,16 @@ export function createServer({ muse, logins, store, key, port = 18611, log = () 
       authorize(req)
       json(res, 200, { object: "list", data: [{ id: MODEL, object: "model", owned_by: "muse.ai" }] })
     },
+    // Account handles only: a connector edition needs to let the user pick one without reading
+    // the engine's accounts.json or any cookie.
+    "GET /v1/accounts": (req, res) => {
+      authorize(req)
+      const accounts = store.handles().map((id) => {
+        const account = store.get(id)
+        return { id, label: account.label || "", expires: expiryMs(account.cookies_exp) }
+      })
+      json(res, 200, { accounts })
+    },
     "POST /v1/chat/completions": async (req, res, meta) => {
       authorize(req)
       await chat(req, res, meta)
