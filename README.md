@@ -28,11 +28,12 @@ muse.ai 没有公开 API。这个插件自带一个本机引擎，用一个无�
 ## 安装
 
 ```sh
+magpie plugin add magpie-muse-web       # npm 包名；如果 npm 上还没有，用下面这行
 magpie plugin add github:JohnWangggg/magpie-muse-web
 magpie plugin login muse-web
 ```
 
-也可以在 Magpie 的插件页添加 `github:JohnWangggg/magpie-muse-web`，然后在账号页登录 `muse-web`。
+也可以在 Magpie 的插件页添加对应的包名或 GitHub 地址，然后在账号页登录 `muse-web`。
 想登录多个账号，就多登录几次。
 
 更新用 `magpie plugin update`；卸载用 `magpie plugin rm`，后面跟 `magpie plugin list` 里显示的名字。
@@ -76,6 +77,20 @@ magpie provider test muse-web          # 发一条真实的小请求，检查整
 只在 Magpie 里用、想让 Magpie 管理多个账号，选这个插件；要生图生视频，或者要给 Magpie 以外的工具一个统一的 API，选 muse2api。
 两者的 provider id 不同（`muse-web` 和 `muse2api`），可以同时安装。
 
+另一个同类是 `magpie-muse-auth`（provider id `muse`）：它走 Meta 的 Muse Code API，设备码登录，
+支持 Wonder / Spark 1.1–1.3、约 1M 上下文、原生工具调用、reasoning 和 web search；需要 Muse Code 订阅，
+属于非官方 API 接入。`muse-web` 用的是 muse.ai 网页账号，只有 Spark、128K 上下文、prompt 工具。
+要原生工具、大上下文、多模型，选 `muse`；要在网页账号上跑、让 Magpie 按账号显示额度，选 `muse-web`。
+
+| | magpie-muse-web | magpie-muse-auth（Meta API） |
+|---|---|---|
+| 账号 | muse.ai 网页账号 | Meta Muse Code 订阅 |
+| 模型 | `muse-spark` | Wonder、Spark 1.1–1.3 |
+| 上下文 | 128K | 约 1M |
+| 工具调用 | prompt 解析 | 原生 Responses tools |
+| 浏览器 | 需要 Chrome/Edge/Chromium/Brave | 不需要 |
+| 主要风险 | 网页改版、地区/代理 | 订阅条款、非官方 API |
+
 ## 登录
 
 - **muse.ai（浏览器登录）**：会开两个窗口。系统默认浏览器里打开的是本机进度页（`http://127.0.0.1:<端口>/login/…`），只显示进度、每 2 秒刷新，那里不能登录。真正的登录在引擎另外打开的 Chrome、Edge、Chromium 或 Brave 窗口里，打开的是 muse.ai。请在那个窗口里照常登录，什么都不用复制。
@@ -107,15 +122,24 @@ Magpie 里只存引擎账号 ID，cookie 留在引擎的数据目录里，文件
 
 Magpie 在会话到期前 10 分钟自动续期；续不上时额度卡片显示「已过期」，重新登录即可。
 
+### 安全边界
+
+- 引擎只监听 `127.0.0.1`，所有 `/v1/*` 都要求 `engine.key`；登录进度页只带一个随机 ID，不显示 cookie。
+- `accounts.json` 和 `engine.key` 以 0600 写入（Windows 用当前用户目录的 ACL）；cookie 只在引擎、账号自己的浏览器上下文和 muse.ai 之间流动。
+- `engine.log` 不记录对话正文或 cookie；错误体和日志里的 Bearer/token/hatch cookie 会脱敏，但上游返回的普通文本仍可能出现在错误里，分享日志前请自己检查一遍。
+- 插件不会复用你日常浏览器的登录态；登录窗口用的是临时资料目录，完成后删除。
+
 ## 对话
 
 请求走 OpenAI 兼容的 Chat Completions，流式和非流式都支持。
 
 - 每个账号在浏览器里只开一个页面，一直连着 muse.ai 的虚拟机。每个 Magpie 会话对应 muse.ai 的一个对话，切换会话就在这个页面里跳到对应的对话，不重新加载，约 0.5 秒。
-- 同一会话继续聊时回到它的对话，只发最新一条消息。新会话、页面卡住或对话太长时开新对话，把整段历史一次发过去。
+- 同一会话继续聊时回到它的对话，只发最新一条消息。新会话或页面卡住时开新对话，把历史一次发过去；历史超过预算（约 40 万字符、80 轮）时保留 system 与最近若干轮，并在开头注明省略了多少条。
 - 一个账号同时只回答一条（`maxConcurrency: 1`），忙时返回 429，由 Magpie 换账号。
 - 页面提示额度用完（「已用完使用额度」等）时立刻返回 429，不用等首字超时。只看页面自己的提示，模型回答里出现这些字不算。
 - 登录失效返回 401，Magpie 会提示重新登录。
+- 错误响应带机器可读的 `error.code`；429/503 还带 `Retry-After`。常见值见下面的排查表。
+- `tool_choice` 为 `required` 或指定工具时，如果模型只回文本，引擎会追加一次 repair 提示；仍不调用则返回 422 `tool_call_not_parsed`。
 - 只发文本：消息里的图片、文件换成「[图片]」「[文件]」字样，其余内容照常发送。
 - 页面在回答下方显示的“建议回复”按钮不算回答内容。
 
@@ -177,6 +201,8 @@ muse.ai 没有公开上下文上限。按 128K 声明，是为了让客户端在
 | `MUSE_WEB_ENGINE_PORT` | 引擎端口 | `18611` |
 | `MUSE_WEB_HOME` | 数据目录 | 见上表 |
 | `MUSE_WEB_ENGINE` | 改用自己运行的引擎地址，插件不再自己启动引擎 | 插件自带 |
+| `MUSE_WEB_ENGINE_KEY` | 外部引擎的 `engine.key`；配合 `MUSE_WEB_ENGINE` 使用 | 读数据目录的 `engine.key` |
+| `MUSE_WEB_SITE` | 改用别的 muse.ai 兼容站点（测试/镜像） | `https://muse.ai` |
 
 ## 排查问题
 
@@ -193,6 +219,20 @@ muse.ai 没有公开上下文上限。按 128K 声明，是为了让客户端在
 | 登录失败：「已登录，但账号没有回答测试消息」 | 会话拿到了但对话不通，常见于虚拟机还在预热，稍后重新登录 |
 | Agent 说它看不到你的文件，或让你自己运行命令 | 模型这次没按工具格式回答，重试或换种说法；日志里会是 `tools=…→text` |
 | 连不上 muse.ai | 检查网络，或用 `MUSE_WEB_PROXY` 指定代理 |
+
+错误码（响应里的 `error.code`）：
+
+| code | HTTP | 含义 | 处理 |
+|---|---|---|---|
+| `session_expired` | 401 | 会话被 muse.ai 登出 | 重新登录该账号 |
+| `account_busy` | 429 | 这个账号正在回答 | Magpie 换号；`Retry-After: 1` |
+| `quota_spent` | 429 | 这个账号额度用完 | 等重置或换号；`Retry-After: 60` |
+| `prompt_too_long` | 413 | 页面拒收过长的消息 | 开新会话或减少历史 |
+| `vm_warming` | 503 | 账号虚拟机还在预热 | 10 秒后重试 |
+| `page_unavailable` | 503 | 页面没加载出来 | 10 秒后重试 |
+| `send_failed` | 503 | 消息没有发出去 | 重试 |
+| `stream_interrupted` | SSE | 流式回答中途失败 | 重试该轮 |
+| `tool_call_not_parsed` | 422 | required/指定工具没有被调用 | 重试或换模型 |
 
 ## 不支持
 
@@ -244,8 +284,12 @@ Sign in to each muse.ai account in a browser window; Magpie then chats with Muse
 (`muse-web/muse-spark`) through a headless Chrome the plugin's local engine drives,
 schedules requests across the accounts, and shows each account's weekly usage on its card.
 Tool calls are supported through the prompt: the model writes them in `tool_call` code blocks,
-which come back as standard `tool_calls`. Install with
-`magpie plugin add github:JohnWangggg/magpie-muse-web`, then `magpie plugin login muse-web`.
+which come back as standard `tool_calls`; `tool_choice: required` gets one repair turn.
+Long histories are trimmed to roughly 400K characters / 80 turns with an explicit omission note.
+Errors carry `error.code` and 429/503 responses carry `Retry-After`. Install with
+`magpie plugin add magpie-muse-web` (or `github:JohnWangggg/magpie-muse-web` if npm is not
+published yet), then `magpie plugin login muse-web`.
 Sign-in opens two windows: the system browser shows a local progress page, and a separate
 Chrome, Edge, Chromium or Brave window is where you actually sign in. Firefox cannot be that window.
-Needs one of those browsers. Text only. MIT licensed.
+Needs one of those browsers. Text only. MIT licensed. For the Meta Muse Code API instead of the
+web account, see `magpie-muse-auth` (provider `muse`).

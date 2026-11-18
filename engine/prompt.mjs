@@ -6,6 +6,18 @@ import { callsAsText } from "./tools.mjs"
 
 export class PromptError extends Error {}
 
+// The page has no documented context limit. Keep the prompt well under the 128K tokens the model
+// declares (roughly 4 chars per token), and keep each single turn from swallowing the whole budget.
+export const MAX_PROMPT_CHARS = 400_000
+export const MAX_TURNS = 80
+const MAX_TURN_CHARS = 120_000
+
+function clip(text, limit) {
+  const value = String(text || "")
+  if (value.length <= limit) return value
+  return value.slice(0, limit) + "\n…（内容过长，已截断）"
+}
+
 const TEXT_PARTS = new Set(["text", "input_text", "output_text"])
 // The page takes text only: an image or file is named in place, so the rest of the message still goes.
 const OTHER_PARTS = { image_url: "[图片]", input_image: "[图片]", image: "[图片]", file: "[文件]", input_file: "[文件]", input_audio: "[音频]" }
@@ -23,7 +35,7 @@ function text(content) {
   }).join("")
 }
 
-export function buildPrompt(messages) {
+export function buildPrompt(messages, { maxChars = MAX_PROMPT_CHARS, maxTurns = MAX_TURNS } = {}) {
   if (!Array.isArray(messages) || messages.length === 0) throw new PromptError("messages is empty")
   const system = []
   const turns = []
@@ -53,10 +65,30 @@ export function buildPrompt(messages) {
   // On a continuing thread the page already holds everything up to its last assistant turn, so
   // last is every turn after that: parallel tool results arrive together and must all be sent.
   const cut = turns.findLastIndex(([role]) => role === "assistant")
-  const last = turns.slice(cut + 1).map(([, body]) => body).join("\n\n")
-  if (!system.length && turns.length === 1 && turns[0][0] === "user") return { full: turns[0][1], last, turns: 1 }
-  const blocks = []
-  if (system.length) blocks.push("背景与任务设定：\n" + system.join("\n\n"))
-  for (const [role, body] of turns) blocks.push(`${role === "assistant" ? "助手" : "用户"}：\n${body}`)
-  return { full: blocks.join("\n\n"), last, turns: turns.length }
+  const last = clip(turns.slice(cut + 1).map(([, body]) => body).join("\n\n"), maxChars)
+  if (!system.length && turns.length === 1 && turns[0][0] === "user") {
+    return { full: clip(turns[0][1], maxChars), last, turns: 1 }
+  }
+  let kept = turns
+  let omitted = 0
+  if (kept.length > maxTurns) {
+    omitted = kept.length - maxTurns
+    kept = kept.slice(-maxTurns)
+  }
+  const build = () => {
+    const blocks = []
+    if (system.length) blocks.push("背景与任务设定：\n" + clip(system.join("\n\n"), Math.max(20_000, Math.floor(maxChars / 2))))
+    for (const [role, body] of kept) blocks.push(`${role === "assistant" ? "助手" : "用户"}：\n${clip(body, MAX_TURN_CHARS)}`)
+    return blocks.join("\n\n")
+  }
+  let full = build()
+  // Drop the oldest turns until the whole text fits. Always keep the last exchange.
+  while (full.length > maxChars && kept.length > 2) {
+    kept = kept.slice(1)
+    omitted++
+    full = build()
+  }
+  if (omitted) full = `（更早的对话已省略 ${omitted} 条）\n\n${full}`
+  if (full.length > maxChars) full = clip(full, maxChars)
+  return { full, last, turns: turns.length }
 }

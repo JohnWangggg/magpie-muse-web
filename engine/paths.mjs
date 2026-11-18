@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync, writeSync } from "node:fs"
 import { randomBytes } from "node:crypto"
 import os from "node:os"
 import path from "node:path"
@@ -28,10 +28,28 @@ export function writePrivate(file, contents) {
 
 export function engineKey(dir) {
   const file = path.join(dir, "engine.key")
-  if (existsSync(file)) {
-    const key = readFileSync(file, "utf8").trim()
-    if (key) return key
+  mkdirSync(dir, { recursive: true })
+  for (let i = 0; i < 20; i++) {
+    if (existsSync(file)) {
+      const key = readFileSync(file, "utf8").trim()
+      if (key) return key
+      // Another engine created the file and has not written its key yet; give it a moment.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25)
+      continue
+    }
+    try {
+      const key = randomBytes(24).toString("hex")
+      // "wx" makes creation exclusive: two engines starting together cannot each install a key.
+      const fd = openSync(file, "wx", 0o600)
+      writeSync(fd, key + "\n")
+      closeSync(fd)
+      try { chmodSync(file, 0o600) } catch {}
+      return key
+    } catch (err) {
+      if (err.code !== "EEXIST") throw err
+    }
   }
+  // The file is there but empty (a crash between create and write): replace it atomically.
   const key = randomBytes(24).toString("hex")
   writePrivate(file, key + "\n")
   return key

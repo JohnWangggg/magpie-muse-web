@@ -2,9 +2,9 @@
 // chat SSE · 401 sign-in expired · 429 account busy · 503 engine trouble.
 import http from "node:http"
 import { randomUUID, timingSafeEqual } from "node:crypto"
-import { AuthError, expiryMs, QuotaError, renewSession } from "./muse.mjs"
+import { AuthError, expiryMs, PromptTooLongError, QuotaError, redact, renewSession } from "./muse.mjs"
 import { buildPrompt, PromptError } from "./prompt.mjs"
-import { functions, parseToolCalls, stripLabels, TOOLS_REMINDER, toolsPrompt } from "./tools.mjs"
+import { functions, parseToolCalls, stripLabels, TOOLS_REMINDER, toolChoiceRequired, toolsPrompt } from "./tools.mjs"
 
 import { VERSION } from "./version.mjs"
 
@@ -14,9 +14,11 @@ const USAGE_STALE_MS = 30 * 60_000
 const USAGE_AFTER_CHAT_MS = 2 * 60_000
 
 class HttpError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = "", retryAfter = 0) {
     super(message)
     this.status = status
+    this.code = code
+    this.retryAfter = retryAfter
   }
 }
 
@@ -32,8 +34,27 @@ function json(res, status, body) {
   res.end(data)
 }
 
-function fail(res, status, message) {
-  json(res, status, { error: { message, type: status === 401 ? "authentication_error" : status === 429 ? "rate_limit_error" : "engine_error" } })
+function fail(res, status, message, { code = "", retryAfter = 0 } = {}) {
+  const type = status === 401 ? "authentication_error"
+    : status === 429 ? "rate_limit_error"
+    : status >= 400 && status < 500 ? "invalid_request_error"
+    : "engine_error"
+  const data = JSON.stringify({ error: { message: redact(message), type, ...(code ? { code } : {}) } })
+  const headers = { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(data) }
+  if (retryAfter > 0) headers["retry-after"] = String(Math.max(1, Math.ceil(retryAfter)))
+  res.writeHead(status, headers)
+  res.end(data)
+}
+
+// A GenerationError's message is the only thing the page gave us; turn it into a code the
+// gateway and the agent can act on (retry now, wait for the VM, or re-sign-in).
+function generationCode(err) {
+  const text = String(err?.message || "")
+  if (/预热|warming/i.test(text)) return ["vm_warming", 10]
+  if (/页面|page|加载/i.test(text)) return ["page_unavailable", 10]
+  if (/超时|timeout/i.test(text)) return ["upstream_timeout", 5]
+  if (/没有发出去|send/i.test(text)) return ["send_failed", 2]
+  return ["engine_unavailable", 5]
 }
 
 async function body(req, limit = 8 << 20) {
@@ -41,14 +62,14 @@ async function body(req, limit = 8 << 20) {
   let size = 0
   for await (const chunk of req) {
     size += chunk.length
-    if (size > limit) throw new HttpError(413, "request too large")
+    if (size > limit) throw new HttpError(413, "request too large", "request_too_large")
     chunks.push(chunk)
   }
   if (!size) return {}
   try {
     return JSON.parse(Buffer.concat(chunks).toString("utf8"))
   } catch {
-    throw new HttpError(400, "invalid JSON body")
+    throw new HttpError(400, "invalid JSON body", "invalid_json")
   }
 }
 
@@ -82,14 +103,14 @@ export function createServer({ muse, logins, store, key, port = 18611, log = () 
   function authorize(req) {
     const header = String(req.headers.authorization || "")
     const token = header.startsWith("Bearer ") ? header.slice(7).trim() : ""
-    if (!token || !same(token, key)) throw new HttpError(401, "bad engine key")
+    if (!token || !same(token, key)) throw new HttpError(401, "bad engine key", "engine_key_invalid")
   }
 
   function account(req) {
     const id = String(req.headers["x-muse-account"] || "").trim()
-    if (!id) throw new HttpError(400, "missing X-Muse-Account")
+    if (!id) throw new HttpError(400, "missing X-Muse-Account", "account_missing")
     const item = store.get(id)
-    if (!item) throw new HttpError(401, "unknown account; sign in again")
+    if (!item) throw new HttpError(401, "unknown account; sign in again", "account_unknown")
     return item
   }
 
@@ -101,12 +122,13 @@ export function createServer({ muse, logins, store, key, port = 18611, log = () 
     try {
       prompt = buildPrompt(payload.messages)
     } catch (err) {
-      if (err instanceof PromptError) throw new HttpError(400, err.message)
+      if (err instanceof PromptError) throw new HttpError(400, err.message, "invalid_request")
       throw err
     }
     const toolNote = toolsPrompt(payload.tools, payload.tool_choice)
+    const requiredTool = toolChoiceRequired(payload.tools, payload.tool_choice)
     if (toolNote) prompt = { ...prompt, full: `${prompt.full}\n\n${toolNote}`, last: prompt.last && `${prompt.last}\n\n${TOOLS_REMINDER}` }
-    if (busy.has(acct.id)) throw new HttpError(429, "account busy")
+    if (busy.has(acct.id)) throw new HttpError(429, "account busy", "account_busy", 1)
     busy.add(acct.id)
     const session = String(req.headers["x-muse-session"] || "").trim()
     meta.session = session
@@ -131,7 +153,9 @@ export function createServer({ muse, logins, store, key, port = 18611, log = () 
     // With tools, text goes out a whole line at a time, code block labels left out, and from the
     // first "<", "{" or "`" on it is held back: that may open a tool call.
     let shown = ""
-    let holding = false
+    // A required tool must be parsed before any text goes out; otherwise the client would see a
+    // normal answer and never learn that the tool was expected.
+    let holding = !!requiredTool
     let pending = ""
     try {
       for await (const delta of muse.chat(acct, prompt, { conversation: session, continuing, signal: ac.signal, timing, expectTools: !!toolNote })) {
@@ -157,8 +181,34 @@ export function createServer({ muse, logins, store, key, port = 18611, log = () 
         res.write(chunk({ content: piece }))
         shown += piece
       }
-      const whole = timing.text || text
-      const { calls, content } = toolNote ? parseToolCalls(whole, payload.tools) : { calls: [], content: whole }
+      let whole = timing.text || text
+      let parsed = toolNote ? parseToolCalls(whole, payload.tools) : { calls: [], content: whole }
+      let calls = parsed.calls
+      let content = parsed.content
+      const satisfied = () => requiredTool === "required"
+        ? calls.length > 0
+        : !requiredTool || calls.some((c) => c.name === requiredTool)
+      if (requiredTool && !satisfied() && session) {
+        // One repair turn: the model answered with prose although the client required a tool.
+        const repair = "你刚才没有按格式调用工具。请只输出一个 tool_call 代码块，里面是一个 JSON 对象：{\"name\": \"工具名\", \"arguments\": {参数}}。不要输出其他文字。"
+        let repaired = ""
+        try {
+          for await (const delta of muse.chat(acct, { full: repair, last: repair, turns: 1 }, { conversation: session, continuing: true, signal: ac.signal, timing: {}, expectTools: true })) repaired += delta
+          const again = parseToolCalls(repaired, payload.tools)
+          if (again.calls.length) {
+            calls = again.calls
+            content = again.content
+            whole = repaired
+            text = repaired
+          }
+        } catch (err) {
+          if (err instanceof AuthError || err instanceof QuotaError) throw err
+          // Keep the first answer; the 422 below still tells the client the contract was missed.
+        }
+      }
+      if (requiredTool && !satisfied()) {
+        throw new HttpError(422, "model did not call the required tool", "tool_call_not_parsed")
+      }
       const toolCalls = calls.map((c) => ({ id: `call_${randomUUID().replaceAll("-", "").slice(0, 24)}`, type: "function", function: c }))
       const finish = toolCalls.length ? "tool_calls" : "stop"
       if (toolNote) meta.tools = `${functions(payload.tools).length}→${toolCalls.map((c) => c.function.name).join(",") || "text"}`
@@ -180,15 +230,23 @@ export function createServer({ muse, logins, store, key, port = 18611, log = () 
       res.write(chunk({}, finish))
       res.end("data: [DONE]\n\n")
     } catch (err) {
+      if (err instanceof HttpError) throw err
       await muse.closeTab(acct.id, session).catch(() => {})
-      if (err instanceof AuthError) throw new HttpError(401, err.message)
+      if (err instanceof AuthError) throw new HttpError(401, err.message, "session_expired")
       if (err instanceof QuotaError) {
         setTimeout(() => readUsage(acct, 0), 1500).unref?.()
-        throw new HttpError(429, err.message)
+        throw new HttpError(429, err.message, "quota_spent", 60)
       }
-      if (!started) throw new HttpError(503, err.message || "engine unavailable")
-      meta.reason = err.message
-      res.end(`data: ${JSON.stringify({ error: { message: err.message, type: "engine_error" } })}\n\n`)
+      if (err instanceof PromptTooLongError) throw new HttpError(413, err.message, "prompt_too_long")
+      if (!started) {
+        const [code, retryAfter] = generationCode(err)
+        throw new HttpError(503, err.message || "engine unavailable", code, retryAfter)
+      }
+      meta.reason = redact(err.message)
+      if (!res.writableEnded && !res.destroyed) {
+        res.write(`data: ${JSON.stringify({ error: { message: redact(err.message), type: "engine_error", code: "stream_interrupted" } })}\n\n`)
+        res.end("data: [DONE]\n\n")
+      }
     } finally {
       busy.delete(acct.id)
       // what the answer spent shows on the card soon after, read at most every 2 minutes
@@ -210,8 +268,9 @@ export function createServer({ muse, logins, store, key, port = 18611, log = () 
       store.update(acct.id, renewed.cookies, renewed.cookies_exp)
       json(res, 200, { expires: expiryMs(renewed.cookies_exp) })
     } catch (err) {
-      if (err instanceof AuthError) throw new HttpError(401, err.message)
-      throw new HttpError(503, err.message)
+      if (err instanceof AuthError) throw new HttpError(401, err.message, "session_expired")
+      const [code, retryAfter] = generationCode(err)
+      throw new HttpError(503, err.message, code, retryAfter)
     }
   }
 
@@ -276,18 +335,21 @@ export function createServer({ muse, logins, store, key, port = 18611, log = () 
       else if (req.method === "GET" && (m = url.pathname.match(/^\/v1\/login\/([\w-]+)$/))) {
         authorize(req)
         const state = logins.status(m[1])
-        if (!state) throw new HttpError(404, "no such login")
+        if (!state) throw new HttpError(404, "no such login", "login_not_found")
         json(res, 200, state)
       } else if (req.method === "GET" && (m = url.pathname.match(/^\/login\/([\w-]+)$/))) {
         const html = loginPage(logins.status(m[1]))
         res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" })
         res.end(html)
-      } else throw new HttpError(404, "not found")
+      } else throw new HttpError(404, "not found", "not_found")
     } catch (err) {
       const status = err instanceof HttpError ? err.status : 500
-      meta.reason = err.message
-      if (!res.headersSent) fail(res, status, err.message)
-      else res.end()
+      meta.reason = redact(err.message)
+      if (!res.headersSent) fail(res, status, err.message, {
+        code: err instanceof HttpError ? err.code : "",
+        retryAfter: err instanceof HttpError ? err.retryAfter : 0,
+      })
+      else if (!res.writableEnded) res.end()
     } finally {
       onActivity()
       const at = new Date().toTimeString().slice(0, 8)

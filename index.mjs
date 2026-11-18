@@ -60,7 +60,9 @@ function engineHeaders(key, handle) {
 }
 
 function structured(windows) {
-  return Array.isArray(windows) && windows.length > 0 && windows.every((item) => {
+  if (!Array.isArray(windows)) return []
+  // One malformed meter should not throw away the valid ones.
+  return windows.filter((item) => {
     return item && typeof item.name === "string" && item.name.trim() !== "" && typeof item.used === "number" && item.used >= 0 && item.used <= 100
   })
 }
@@ -228,10 +230,14 @@ export const MuseWebPlugin = async (_input, options) => {
         if (res.status === 401) throw Object.assign(new Error("session refused"), { signIn: "expired" })
         if (!res.ok) throw new Error("session refresh unavailable")
         const body = await res.json()
-        if (typeof body.expires !== "number" || !Number.isFinite(body.expires)) {
-          throw new Error("session refresh returned no expiry")
-        }
-        return auth?.type === "oauth" ? { access: handle, refresh: handle, expires: body.expires } : { expires: body.expires }
+        // muse.ai does not always expose a cookie expiry. Keep the account usable with the old
+        // deadline when it is still in the future, otherwise give it a day and try again later.
+        const expires = Number.isFinite(body.expires)
+          ? body.expires
+          : Number.isFinite(auth?.expires) && auth.expires > Date.now()
+            ? auth.expires
+            : Date.now() + 86_400_000
+        return auth?.type === "oauth" ? { access: handle, refresh: handle, expires } : { expires }
       },
       async usage(getAuth) {
         const handle = handleOf(await getAuth())
@@ -252,7 +258,8 @@ export const MuseWebPlugin = async (_input, options) => {
           ...(text(body.user) ? { user: text(body.user) } : {}),
           ...(text(body.until) ? { until: text(body.until) } : {}),
         }
-        if (structured(body.windows)) return { ...card, windows: body.windows, signIn: "kept" }
+        const windows = structured(body.windows)
+        if (windows.length) return { ...card, windows, signIn: "kept" }
         // No quota to show is not an error when the engine described the account.
         if (card.plan) return { ...card, windows: [], signIn: "kept" }
         return { error: text(body.error) || "no structured quota" }

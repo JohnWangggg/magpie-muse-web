@@ -16,12 +16,22 @@ export class AuthError extends Error {}
 export class GenerationError extends Error {}
 // muse.ai says the account has used up its allowance: another account should answer.
 export class QuotaError extends GenerationError {}
+// The page refused the message as too long before it answered; retry with a smaller history.
+export class PromptTooLongError extends GenerationError {}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
 
 export function cookieHeader(cookies) {
   return Object.entries(cookies || {}).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join("; ")
+}
+
+// Logs and error bodies end up in bug reports. Strip the shapes that carry credentials.
+export function redact(text) {
+  return String(text ?? "")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer ***")
+    .replace(/([?&](?:key|token|access_token|refresh_token|api_key)=)[^&\s]+/gi, "$1***")
+    .replace(/\b(hatch_[a-z_]+)=([^;\s]+)/gi, "$1=***")
 }
 
 // Set-Cookie lines → {cookies, exp} with exp in unix seconds.
@@ -87,24 +97,32 @@ export async function renewSession(site, cookies, expires, { fetchImpl = fetch, 
   } catch (err) {
     throw new GenerationError(`/api/session 网络请求失败 (${err?.name || "Error"})；请检查网络或代理`)
   }
-  if (res.status === 401) throw new AuthError("会话认证失败 (/api/session HTTP 401)，需要重新登录")
+  // Muse may rotate session cookies on a successful response even when no workspace is assigned
+  // (muse2api v1.6.11). Parse them before any status decision, so a refusal never leaves the
+  // account on a revoked cookie. The error carries them so the caller can persist them.
+  const set = parseSetCookies(typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [])
+  cur = { ...cur, ...set.cookies }
+  Object.assign(exp, set.exp)
+  const failed = (err) => {
+    err.cookies = cur
+    err.cookies_exp = exp
+    return err
+  }
+  if (res.status === 401) throw failed(new AuthError("会话认证失败 (/api/session HTTP 401)，需要重新登录"))
   if (res.status !== 200) {
-    throw new GenerationError(res.status === 403
+    throw failed(new GenerationError(res.status === 403
       ? "/api/session HTTP 403：访问被拒绝，请检查出口地区或代理；不能据此判定登录失效"
-      : `/api/session HTTP ${res.status}：上游请求未成功`)
+      : `/api/session HTTP ${res.status}：上游请求未成功`))
   }
   let body
   try {
     body = await res.json()
   } catch {
-    throw new GenerationError("/api/session 返回的不是 JSON；会话状态未确认")
+    throw failed(new GenerationError("/api/session 返回的不是 JSON；会话状态未确认"))
   }
   if (!body || body.status !== "assigned") {
-    throw new GenerationError("/api/session 没有返回 assigned 会话；请在官网检查账号状态")
+    throw failed(new GenerationError("/api/session 没有返回 assigned 会话；请在官网检查账号状态"))
   }
-  const set = parseSetCookies(typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [])
-  cur = { ...cur, ...set.cookies }
-  Object.assign(exp, set.exp)
   if (wakeVm && body.vm_id && body.vm_state !== "DISABLED") {
     try {
       await fetchImpl(`${site}/api/hatch/vm/wake`, {
@@ -202,6 +220,8 @@ export function usageCard(meters, now = Date.now()) {
 // The page's own words for a VM it is not connected to, in English and in its zh_CN strings.
 const CONNECTING = /Connecting\.\.\.|正在连接/
 const STUCK = /Still sending|仍在发送中|Connecting\.\.\.|正在连接/
+// The page refused the message itself before any answer appeared.
+const PROMPT_TOO_LONG = /(?:too long|message is too long|prompt is too long|exceeds? .{0,20}(?:limit|length)|maximum context|上下文.{0,10}(?:过长|太长|上限)|消息.{0,10}(?:过长|太长)|内容.{0,10}过长)/i
 
 const READY_JS = `(function(){
   if (document.readyState !== 'complete') return 'loading';
@@ -292,11 +312,24 @@ const SETTER_JS = (text) => `(function(t){var ta=document.querySelector('textare
   ta.dispatchEvent(new Event('change',{bubbles:true}));
   return (ta.value||'').length;})(${JSON.stringify(text)})`
 
-const SEND_BUTTON_JS = `(function(){var b=[...document.querySelectorAll('button,[role=button]')]
-  .filter(function(x){return x.offsetParent!==null;})
-  .find(function(x){return /发送|send/i.test(x.getAttribute('aria-label')||'')
-    ||/发送|send/i.test(x.getAttribute('data-testid')||'')
-    ||/send/i.test(x.innerText||'');});
+const SEND_BUTTON_JS = `(function(){
+  var ta=document.querySelector('textarea');
+  if(!ta) return 'no-ta';
+  var scope=ta.closest('form') || ta.closest('[data-testid*="composer"]') || ta.closest('[class*="composer"]') || ta.parentElement || document;
+  function label(x){return ((x.getAttribute('aria-label')||'')+' '+(x.getAttribute('data-testid')||'')+' '+(x.innerText||'')).trim();}
+  function pick(root){
+    return [].slice.call(root.querySelectorAll('button,[role=button]'))
+      .filter(function(x){return x.offsetParent!==null;})
+      .find(function(x){return /发送|send/i.test(label(x)) && !/stop|停止|取消|cancel/i.test(label(x));});
+  }
+  var b=pick(scope);
+  if(!b && scope!==document){
+    // Some Muse builds render the send control in a sibling portal, not the composer's subtree.
+    // Fall back to the page, but never to the sidebar's navigation buttons.
+    b=[].slice.call(document.querySelectorAll('button,[role=button]'))
+      .filter(function(x){return x.offsetParent!==null && !x.closest('nav,aside,[role=navigation]');})
+      .find(function(x){return /发送|send/i.test(label(x)) && !/stop|停止|取消|cancel/i.test(label(x));});
+  }
   if(!b)return 'no-button'; if(b.disabled)return 'disabled'; b.click(); return 'clicked';})()`
 
 const SIGNED_OUT = /log in|sign in|create an account|登录|use another account/
@@ -602,12 +635,18 @@ export class Muse {
       if (a.contextId) await this.setCookies(browser, a.contextId, r.cookies, r.cookies_exp)
       return { cookies: r.cookies, exp: r.cookies_exp }
     } catch (err) {
+      // Persist cookies Muse rotated even in a refusal: the next page load must not reuse
+      // credentials the upstream has just revoked (muse2api v1.6.11).
+      if (err.cookies) {
+        this.onCookies(account.id, err.cookies, err.cookies_exp, err.vm)
+        if (a.contextId) await this.setCookies(browser, a.contextId, err.cookies, err.cookies_exp).catch(() => {})
+      }
       if (err instanceof AuthError) {
         if (!closeOnAuth) a.dead = err
         else await this.closeAccount(account.id)
         if (closeOnAuth) throw err
       }
-      return { cookies, exp }
+      return { cookies: err.cookies || cookies, exp: err.cookies_exp || exp }
     }
   }
 
@@ -846,7 +885,8 @@ export class Muse {
     timing.tabMs = Date.now() - t0
     const base = await this.poll(page)
     const seenMedia = new Set((base.media || []).map((m) => m.src))
-    await this.send(page, text)
+    const sentHow = await this.send(page, text)
+    if (sentHow === "not-sent") throw new GenerationError("消息没有发出去（输入框还在，发送按钮没有响应）")
     const sentAt = Date.now()
     const deadline = sentAt + this.chatTimeoutMs
     const firstBy = Math.min(deadline, sentAt + this.firstTokenMs)
@@ -921,6 +961,7 @@ export class Muse {
     }
     if (!got) {
       const body = String((await page.js("document.body.innerText").catch(() => "")) || "")
+      if (PROMPT_TOO_LONG.test(body)) throw new PromptTooLongError("muse.ai 拒收了这条消息：内容过长")
       if (/正在预热|warming up/i.test(body)) throw new GenerationError("muse.ai 这个账号的虚拟机还在预热，没有回答")
       throw new GenerationError("等待助手首字响应超时")
     }

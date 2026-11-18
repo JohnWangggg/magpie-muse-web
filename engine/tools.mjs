@@ -43,6 +43,16 @@ function params(schema, indent = "   ") {
   }).join("\n")
 }
 
+// "required", a specific tool name, or "" when the model may answer with text.
+export function toolChoiceRequired(tools, toolChoice) {
+  const list = functions(tools)
+  if (!list.length) return ""
+  const pick = choice(toolChoice)
+  if (pick === "required") return "required"
+  if (pick && list.some((f) => f.name === pick)) return pick
+  return ""
+}
+
 // The protocol appended to a whole conversation; "" when there are no tools or tool_choice is "none".
 export function toolsPrompt(tools, toolChoice) {
   const list = functions(tools)

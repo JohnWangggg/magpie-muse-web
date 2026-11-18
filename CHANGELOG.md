@@ -1,5 +1,18 @@
 # 更新记录
 
+## 0.6.0 · 2026-11-18
+
+- 修复：muse.ai 在 `/api/session` 返回 200、但没有分配 workspace 时可能同时轮换 cookie；旧实现先抛错、后解析 `Set-Cookie`，导致账号继续使用已被撤销的 cookie（移植 muse2api v1.6.11 的修复）。现在先合并并持久化 `Set-Cookie`，再把错误交给调用方。
+- 修复：发送按钮不再全页搜索 `send`，而是先限定在 textarea 所在的 composer 容器内，并排除 Stop/取消，避免点到侧栏按钮（移植 muse2api v1.6.10 的修复）。
+- 修复：流式回答中途失败时补 `data: [DONE]`，客户端不会一直等到超时；错误事件带 `stream_interrupted`。
+- 新增：错误响应带机器可读的 `error.code`（`session_expired`、`account_busy`、`quota_spent`、`prompt_too_long`、`vm_warming`、`page_unavailable`、`send_failed` 等），429/503 带 `Retry-After`。
+- 新增：历史预算约 40 万字符 / 80 轮，超出时保留 system 与最近若干轮并注明省略条数；页面明确拒收过长消息时返回 413 `prompt_too_long`。
+- 新增：`tool_choice` 为 `required` 或指定工具时，模型只回文本会追加一次 repair 提示；仍不调用返回 422 `tool_call_not_parsed`。
+- 新增：登录后的测试消息在 VM 预热类失败时重试最多 3 次（Auth/Quota 不重试），降低首次登录偶发失败。
+- 其他可靠性：`engine.key` 用 `wx` 排他创建，两个引擎同时启动不会各自装一把钥匙；refresh 拿不到 expiry 时回退到旧值/一天后；额度窗口逐条过滤，坏掉一项不再丢掉全部；错误体和日志里的 Bearer/token/hatch cookie 会脱敏。
+- 文档：补 `MUSE_WEB_ENGINE_KEY`、`MUSE_WEB_SITE`、安全边界、错误码表，以及与 `magpie-muse-auth`（Meta API）的对比；安装优先写 npm 包名。
+- 版本：0.6.0。
+
 ## 0.5.10 · 2026-11-11
 
 - 说明：登录会开两个窗口。系统默认浏览器里的是本机进度页，真正登录在引擎另开的 Chrome、Edge、Chromium 或 Brave 窗口里；不会用日常浏览器的登录态，Firefox 不能当登录窗口（[#12](https://github.com/JohnWangggg/magpie-muse-web/issues/12)）。进度页正文也写明了这一点。

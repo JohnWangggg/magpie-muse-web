@@ -54,7 +54,10 @@ async function go(){
   bubble('hatch-user-bubble-bg',t);
   if(/QUOTA:/.test(t)){const d=document.createElement('div');d.textContent='已用完使用额度';m.appendChild(d);button();return}
   c.innerHTML='<button data-testid="hatch-composer-stop-button" aria-label="Stop">■</button>';
-  const reply=/BARETOOL:/.test(t)?'{"name": "shell", "arguments": {"command": "pwd && ls -la"}}':/TOOLCALL:/.test(t)?'好的，我来看一下。\\n<tool_call>{"name": "shell", "arguments": {"command": "ls -la"}}</tool_call>':(t.match(/REPLY:(\\S+)/)||[])[1]||('第'+n+'轮 收到 '+t.length+' 字');
+  let reply=/BARETOOL:/.test(t)?'{"name": "shell", "arguments": {"command": "pwd && ls -la"}}':/TOOLCALL:/.test(t)?'好的，我来看一下。\\n<tool_call>{"name": "shell", "arguments": {"command": "ls -la"}}</tool_call>':(t.match(/REPLY:(\\S+)/)||[])[1]||('第'+n+'轮 收到 '+t.length+' 字');
+  // The first answer to a required-tool request is prose; the repair turn gets the tool call.
+  if(/TOOLTEXT:/.test(t)) reply='我先用文字解释一下，不调用工具。';
+  if(/没有按格式调用工具/.test(t)) reply='<tool_call>{"name": "shell", "arguments": {"command": "ls"}}</tool_call>';
   const delay=Number((t.match(/DELAY:(\\d+)/)||[])[1]||300);
   const a=bubble('hatch-agent-bubble-bg','');
   // muse.ai's bubble: the reply in .prose, suggested follow-ups as buttons beside it, there while it streams

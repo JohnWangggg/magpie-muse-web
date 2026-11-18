@@ -8,8 +8,8 @@ import os from "node:os"
 import path from "node:path"
 import { browserArgs, findBrowser, freePort } from "../engine/browser.mjs"
 import { Logins, noDesktop } from "../engine/login.mjs"
-import { ESSENTIAL, expiryMs, labelOf, mediaMarkdown, Muse, parseSetCookies, resetDate, settingsItem, settle, usageCard } from "../engine/muse.mjs"
-import { parseToolCalls, toolsPrompt } from "../engine/tools.mjs"
+import { ESSENTIAL, expiryMs, labelOf, mediaMarkdown, Muse, parseSetCookies, redact, renewSession, resetDate, settingsItem, settle, usageCard } from "../engine/muse.mjs"
+import { parseToolCalls, toolChoiceRequired, toolsPrompt } from "../engine/tools.mjs"
 import { VERSION } from "../engine/version.mjs"
 import { parseScutil, parseWinProxy, resolveProxy } from "../engine/net.mjs"
 import { parentAlive, watchParent } from "../engine/parent.mjs"
@@ -34,6 +34,34 @@ describe("pure parts", () => {
     assert.throws(() => buildPrompt([]))
     const shot = buildPrompt([{ role: "user", content: [{ type: "input_text", text: "看这张图" }, { type: "image_url", image_url: { url: "data:," } }] }])
     assert.equal(shot.full, "看这张图[图片]")
+  })
+  test("prompt: a long history is trimmed and says what was left out", () => {
+    const many = Array.from({ length: 120 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: "x".repeat(1_000) }))
+    const p = buildPrompt(many, { maxChars: 20_000, maxTurns: 20 })
+    assert.ok(p.full.length <= 20_100, "prompt stays inside its budget")
+    assert.match(p.full, /更早的对话已省略/)
+  })
+  test("tool_choice: required and a named tool are distinguishable", () => {
+    const tools = [{ type: "function", function: { name: "shell", parameters: { type: "object" } } }]
+    assert.equal(toolChoiceRequired(tools, "required"), "required")
+    assert.equal(toolChoiceRequired(tools, { type: "function", function: { name: "shell" } }), "shell")
+    assert.equal(toolChoiceRequired(tools, "none"), "")
+    assert.equal(toolChoiceRequired(tools, "auto"), "")
+  })
+  test("session refusal keeps cookies Muse rotated in the same response", async () => {
+    const res = {
+      status: 200,
+      headers: { getSetCookie: () => ["hatch_sess=new-session; Path=/; Max-Age=3600"] },
+      json: async () => ({ status: "unavailable" }),
+    }
+    await assert.rejects(
+      renewSession("https://muse.ai", { hatch_sess: "old-session" }, {}, { fetchImpl: async () => res, wakeVm: false }),
+      (err) => {
+        assert.equal(err.cookies.hatch_sess, "new-session")
+        assert.ok(err.cookies_exp.hatch_sess > Date.now() / 1000)
+        return true
+      },
+    )
   })
   test("a generated picture is markdown the client can render", () => {
     assert.equal(mediaMarkdown([{ kind: "image", url: "https://cdn.example/penguin.png" }]), "![](https://cdn.example/penguin.png)")
@@ -199,6 +227,11 @@ describe("pure parts", () => {
     assert.equal(noDesktop("darwin", {}), false)
   })
 
+  test("redact: credentials do not survive into logs", () => {
+    assert.equal(redact("Bearer sk-secret"), "Bearer ***")
+    assert.equal(redact("https://x.test/a?token=abc&ok=1"), "https://x.test/a?token=***&ok=1")
+    assert.equal(redact("hatch_sess=abc; Path=/"), "hatch_sess=***; Path=/")
+  })
   test("cookies: Set-Cookie parsing and expiry", () => {
     const { cookies, exp } = parseSetCookies(["hatch_vml=v; Max-Age=100; HttpOnly", "a=b; Expires=Thu, 01 Jan 2099 00:00:00 GMT"], 1_000_000)
     assert.deepEqual(cookies, { hatch_vml: "v", a: "b" })
@@ -420,6 +453,20 @@ describe("engine against a fake muse.ai in a real browser", { skip: executable ?
     assert.equal(bareChunks.map((c) => c.delta.content || "").join(""), "")
     assert.equal(bareChunks.flatMap((c) => c.delta.tool_calls || []).map((t) => t.function?.arguments || "").join(""), '{"command":"pwd && ls -la"}')
     await muse.closeTab(good, "t3")
+  })
+
+  test("a required tool gets one repair turn", async () => {
+    const tools = [{ type: "function", function: { name: "shell", parameters: { type: "object", properties: { command: { type: "string" } } } } }]
+    const res = await call("/v1/chat/completions", {
+      session: "t-repair",
+      body: { stream: false, tool_choice: "required", messages: [{ role: "user", content: "TOOLTEXT: 看看目录" }], tools },
+    })
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.choices[0].finish_reason, "tool_calls")
+    assert.equal(body.choices[0].message.tool_calls[0].function.name, "shell")
+    assert.match(fake.state.prompts.at(-1), /没有按格式调用工具/)
+    await muse.closeTab(good, "t-repair")
   })
 
   test("a tool call written after a pause in the reply is not cut off", async () => {

@@ -6,7 +6,7 @@ import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs"
 import path from "node:path"
 import { findBrowser } from "./browser.mjs"
 import { Logins } from "./login.mjs"
-import { Muse, QuotaError } from "./muse.mjs"
+import { AuthError, Muse, QuotaError, redact } from "./muse.mjs"
 import { proxiedFetch, resolveProxy } from "./net.mjs"
 import { watchParent } from "./parent.mjs"
 import { dataDir, engineKey, enginePort } from "./paths.mjs"
@@ -27,6 +27,23 @@ function log(line) {
 }
 
 const masked = (url) => String(url).replace(/\/\/[^@/]+@/, "//***@")
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// A new account's VM can still be warming when the test message goes out. Retry that, but not
+// a refused session (AuthError) or a spent allowance (QuotaError, still a working sign-in).
+async function verifyAccount(account, tries = 3) {
+  let last
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await muse.verify(account)
+    } catch (err) {
+      last = err
+      if (err instanceof AuthError || err instanceof QuotaError) throw err
+      if (i < tries - 1) await sleep(8_000 * (i + 1))
+    }
+  }
+  throw last
+}
 const key = engineKey(dir)
 const port = enginePort(env)
 const site = (env.MUSE_WEB_SITE || "https://muse.ai").replace(/\/+$/, "")
@@ -66,10 +83,10 @@ const logins = new Logins({
       const t0 = Date.now()
       const at = new Date().toTimeString().slice(0, 8)
       try {
-        await muse.verify(store.get(saved.handle))
+        await verifyAccount(store.get(saved.handle))
         log(`${at} verify account=${saved.handle} ${Date.now() - t0}ms`)
       } catch (err) {
-        log(`${at} verify account=${saved.handle} failed reason=${err.message}`)
+        log(`${at} verify account=${saved.handle} failed reason=${redact(err.message)}`)
         // a used-up account is still a working sign-in
         if (!(err instanceof QuotaError)) {
           if (!saved.again) {
@@ -97,7 +114,7 @@ async function warm(handles) {
       log(`${new Date().toTimeString().slice(0, 8)} warm account=${handle} ${Date.now() - t0}ms`)
       return account
     } catch (err) {
-      log(`${new Date().toTimeString().slice(0, 8)} warm account=${handle} failed reason=${err.message}`)
+      log(`${new Date().toTimeString().slice(0, 8)} warm account=${handle} failed reason=${redact(err.message)}`)
       return null
     }
   }))
@@ -111,7 +128,7 @@ async function readUsage(account, maxAgeMs = 0) {
     const u = await muse.readUsage(account, { maxAgeMs })
     if (u && u.at >= t0) log(`${at()} usage account=${account.id} ${Date.now() - t0}ms ${u.windows.map((w) => `${w.name}=${w.used}%`).join(" ")}`)
   } catch (err) {
-    log(`${at()} usage account=${account.id} failed reason=${err.message}`)
+    log(`${at()} usage account=${account.id} failed reason=${redact(err.message)}`)
   }
 }
 
@@ -143,7 +160,7 @@ setInterval(async () => {
       const { vmState } = await muse.keepAlive(account)
       log(`${at} keepalive account=${handle} vm=${vmState || "?"}`)
     } catch (err) {
-      log(`${at} keepalive account=${handle} failed reason=${err.message}`)
+      log(`${at} keepalive account=${handle} failed reason=${redact(err.message)}`)
     }
   }
 }, 30 * 60_000).unref()
