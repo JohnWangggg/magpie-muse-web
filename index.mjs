@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { dataDir, enginePort } from "./engine/paths.mjs"
+import { browserOptions } from "./engine/browser.mjs"
 import { VERSION } from "./engine/version.mjs"
 
 const PROVIDER = "muse-web"
@@ -135,12 +136,15 @@ export const MuseWebPlugin = async (_input, options) => {
   }
 
   // Returns null when the engine is down or silent, so callers never mistake that for a refused sign-in.
-  async function control(pathname, method, handle) {
+  async function control(pathname, method, handle, payload) {
     if (!(await ensureEngine())) return null
+    const headers = engineHeaders(engineKey(), handle)
+    if (payload !== undefined) headers["content-type"] = "application/json"
     try {
       return await fetch(`${engineOrigin()}${pathname}`, {
         method,
-        headers: engineHeaders(engineKey(), handle),
+        headers,
+        ...(payload !== undefined ? { body: JSON.stringify(payload) } : {}),
         signal: AbortSignal.timeout(CONTROL_TIMEOUT_MS),
       })
     } catch {
@@ -149,8 +153,9 @@ export const MuseWebPlugin = async (_input, options) => {
     }
   }
 
-  async function browserLogin() {
-    const res = await control("/v1/login", "POST", "")
+  async function browserLogin(inputs = {}) {
+    const browser = typeof inputs?.browser === "string" ? inputs.browser.trim() : ""
+    const res = await control("/v1/login", "POST", "", browser ? { browser } : undefined)
     if (!res?.ok) throw new Error(res ? `muse-web 引擎没能开始登录（HTTP ${res.status}）` : "muse-web 引擎没有启动；日志在数据目录的 engine.log")
     const { id, url } = await res.json()
     return {
@@ -186,6 +191,9 @@ export const MuseWebPlugin = async (_input, options) => {
   // Start (and so pre-warm) the engine as soon as Magpie loads the plugin, not at the first message.
   if (!external()) ensureEngine().catch(() => {})
 
+  // An engine someone else runs may be on another machine, so its browsers are not ours to list.
+  const browsers = external() ? [] : browserOptions()
+
   return {
     config: async (cfg) => {
       cfg.provider ??= {}
@@ -219,7 +227,13 @@ export const MuseWebPlugin = async (_input, options) => {
       // magpie renews the sign-in this long before it ends, through refresh() below
       refreshLead: REFRESH_LEAD_MS,
       methods: [
-        { type: "oauth", label: "muse.ai（浏览器登录）", authorize: browserLogin },
+        {
+          type: "oauth",
+          label: "muse.ai（浏览器登录）",
+          // Only a local engine can use a path from this machine; an external one keeps its own default.
+          ...(browsers.length ? { prompts: [{ type: "select", key: "browser", message: "用哪个浏览器登录 muse.ai？（只列本机已装的 Chromium 系）", options: browsers }] } : {}),
+          authorize: browserLogin,
+        },
         { type: "api", label: "引擎账号 ID（高级：配合自己运行的引擎）", placeholder: "muse-xxxxxxxxxxxx" },
       ],
       async refresh(auth) {

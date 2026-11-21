@@ -328,7 +328,9 @@ export function createServer({ muse, logins, store, key, port = 18611, log = () 
     },
     "POST /v1/login": async (req, res) => {
       authorize(req)
-      const id = await logins.start()
+      // The plugin sends the browser the person picked; an older caller sends no body at all.
+      const { browser } = await body(req)
+      const id = await logins.start(typeof browser === "string" ? browser.trim() : "")
       json(res, 200, { id, url: `http://127.0.0.1:${port}/login/${id}` })
     },
   }
