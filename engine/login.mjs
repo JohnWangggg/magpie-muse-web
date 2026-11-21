@@ -4,7 +4,7 @@
 // leaves the user on the home page; the gateway and VM cookies come once the chat page loads,
 // so the window is sent there.
 import { randomBytes } from "node:crypto"
-import { rmSync } from "node:fs"
+import { existsSync, rmSync } from "node:fs"
 import path from "node:path"
 import { launchBrowser } from "./browser.mjs"
 import { CDP } from "./cdp.mjs"
@@ -40,7 +40,7 @@ export class Logins {
     }
   }
 
-  async start() {
+  async start(browser = "") {
     const id = randomBytes(9).toString("base64url")
     const profileDir = path.join(this.dir, id)
     const run = { status: "starting" }
@@ -49,9 +49,17 @@ export class Logins {
       Object.assign(run, { status: "failed", error: "这台 Linux 没有图形桌面（DISPLAY / WAYLAND_DISPLAY 都没设），弹不出登录窗口；请在有桌面的会话里登录" })
       return id
     }
+    // The browser chosen in the sign-in prompt applies to this window only; anything else keeps
+    // the engine's own default (MUSE_WEB_CHROME, then Chrome, Edge, Chromium, Brave).
+    const chosen = String(browser || "").trim()
+    const executable = chosen || this.executable
+    if (chosen && !existsSync(chosen)) {
+      Object.assign(run, { status: "failed", error: `指定的浏览器不存在: ${chosen}` })
+      return id
+    }
     let opened
     try {
-      opened = await launchBrowser({ executable: this.executable, profileDir, headless: this.headless, proxy: this.proxy, url: `${this.site}/` })
+      opened = await launchBrowser({ executable, profileDir, headless: this.headless, proxy: this.proxy, url: `${this.site}/` })
     } catch (err) {
       Object.assign(run, { status: "failed", error: `打不开浏览器: ${err.message}` })
       return id

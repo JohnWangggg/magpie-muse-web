@@ -22,7 +22,7 @@ muse.ai 没有公开 API。这个插件自带一个本机引擎，用一个无�
 ## 环境要求
 
 - [Magpie](https://github.com/yetone/magpie)，在 0.1.1223 上验证过。
-- 本机装有 Chrome、Edge、Chromium 或 Brave 中的任意一个。登录窗口只用这几种，不会调用系统默认浏览器，也不会复用你日常浏览器里已有的登录状态。Firefox 不能当登录窗口：引擎靠 Chrome DevTools Protocol 操作页面，Firefox 已不再提供。不用另装 Node 或 Python，引擎用 Magpie 自带的 Bun 运行。
+- 本机装有 Chrome、Edge、Chromium 或 Brave 中的任意一个。登录窗口只用这几种，不会调用系统默认浏览器，也不会复用你日常浏览器里已有的登录状态；装了多个时，登录前会让你选一个。Firefox 不能当登录窗口：引擎靠 Chrome DevTools Protocol 操作页面，Firefox 已不再提供。不用另装 Node 或 Python，引擎用 Magpie 自带的 Bun 运行。
 - 能访问 muse.ai 的网络。需要代理时见[设置](#设置)。
 
 ## 安装
@@ -107,7 +107,7 @@ Connector 不启动浏览器、不读 cookie、不 spawn 进程，只连接你�
 
 ## 登录
 
-- **muse.ai（浏览器登录）**：会开两个窗口。系统默认浏览器里打开的是本机进度页（`http://127.0.0.1:<端口>/login/…`），只显示进度、每 2 秒刷新，那里不能登录。真正的登录在引擎另外打开的 Chrome、Edge、Chromium 或 Brave 窗口里，打开的是 muse.ai。请在那个窗口里照常登录，什么都不用复制。
+- **muse.ai（浏览器登录）**：会开两个窗口。系统默认浏览器里打开的是本机进度页（`http://127.0.0.1:<端口>/login/…`），只显示进度、每 2 秒刷新，那里不能登录。真正的登录在引擎另外打开的 Chrome、Edge、Chromium 或 Brave 窗口里（装了多个时，登录前会先让你选一个），打开的是 muse.ai。请在那个窗口里照常登录，什么都不用复制。
   登录后引擎向 muse.ai 确认会话，关掉登录窗口，再发一条很短的测试消息：
   账号真的能回答，才算登录成功。账号额度已用完的也算成功，只是暂时用不了。
   账号默认以登录时间命名，例如「muse.ai 2026-10-13 14:03 登录」。
@@ -208,7 +208,7 @@ muse.ai 没有公开上下文上限。按 128K 声明，是为了让客户端在
 |---|---|---|
 | `MUSE_WEB_PROXY` | 代理地址，或 `direct` 表示直连 | 依次用 `https_proxy` 等环境变量、系统代理，都没有就直连 |
 | `MUSE_WEB_BROWSER` | `headless`、`hidden`（窗口放到屏幕外）或 `show` | `headless` |
-| `MUSE_WEB_CHROME` | 登录和对话用的浏览器路径，必须是 Chromium 系；`firefox.exe` 不行 | 自动查找 Chrome、Edge、Chromium、Brave |
+| `MUSE_WEB_CHROME` | 登录和对话默认用的浏览器路径，必须是 Chromium 系；`firefox.exe` 不行。登录时选的浏览器只覆盖那一次登录窗口 | 自动查找 Chrome、Edge、Chromium、Brave |
 | `MUSE_WEB_IDLE_MIN` | 闲置多少分钟后关浏览器 | `60` |
 | `MUSE_WEB_PREWARM` | 设为 `0` 时不预热 | 预热 |
 | `MUSE_WEB_VERIFY_LOGIN` | 设为 `0` 时登录后不发测试消息 | 发送 |

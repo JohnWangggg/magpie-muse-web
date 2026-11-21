@@ -38,6 +38,35 @@ export function findBrowser(env = process.env, platform = process.platform, exis
   return browserCandidates(platform, env).find((p) => exists(p)) ?? null
 }
 
+// The name a person recognizes for a browser executable, used in the sign-in choices.
+function browserName(file) {
+  const lower = file.toLowerCase()
+  if (lower.includes("msedge") || lower.includes("microsoft edge")) return "Microsoft Edge"
+  if (lower.includes("brave")) return "Brave"
+  if (lower.includes("chromium")) return "Chromium"
+  return "Google Chrome"
+}
+
+// The sign-in prompt's choices: only browsers that are actually installed, one entry per browser.
+// MUSE_WEB_CHROME comes first when it points at an installed file, since the engine would have
+// picked it by itself; choosing an entry overrides that default for this sign-in only.
+export function browserOptions(env = process.env, platform = process.platform, exists = existsSync) {
+  const out = []
+  const seen = new Set()
+  const add = (file, label) => {
+    const key = platform === "win32" ? file.toLowerCase() : file
+    if (seen.has(key)) return
+    seen.add(key)
+    out.push({ label, value: file })
+  }
+  const own = (env.MUSE_WEB_CHROME || "").trim()
+  if (own && exists(own)) add(own, `MUSE_WEB_CHROME（${browserName(own)}）`)
+  for (const file of browserCandidates(platform, env)) {
+    if (exists(file)) add(file, browserName(file))
+  }
+  return out
+}
+
 export function freePort() {
   return new Promise((resolve, reject) => {
     const server = createServer()

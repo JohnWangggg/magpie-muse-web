@@ -40,6 +40,12 @@ function listen() {
         res.end(payload)
         return
       }
+      if (req.url === "/v1/login") {
+        const payload = JSON.stringify({ id: "login-test", url: "http://127.0.0.1:18611/login/login-test" })
+        res.writeHead(200, { "content-type": "application/json", "content-length": Buffer.byteLength(payload) })
+        res.end(payload)
+        return
+      }
       if (req.url === "/v1/session/refresh") {
         const payload = JSON.stringify({ expires: 1800000000000 })
         res.writeHead(200, { "content-type": "application/json", "content-length": Buffer.byteLength(payload) })
@@ -217,6 +223,27 @@ test("api and oauth logins both name the account", async () => {
     assert.deepEqual(kept, { access: "acct-handle-2", refresh: "acct-handle-2", expires: 1_800_000_000_000 })
     assert.equal(fx.seen.at(-1).account, "acct-handle-2")
     assert.deepEqual(fx.hooks.auth.methods.map((m) => m.type), ["oauth", "api"])
+  } finally {
+    await fx.close()
+  }
+})
+
+test("the chosen browser goes to the engine with the sign-in request", async () => {
+  const fx = await boot()
+  try {
+    const oauth = fx.hooks.auth.methods.find((m) => m.type === "oauth")
+    // An engine on another machine owns its browser list, so this plugin does not offer one.
+    assert.equal(oauth.prompts, undefined)
+    const chosen = "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"
+    const started = await oauth.authorize({ browser: chosen })
+    assert.equal(started.url, "http://127.0.0.1:18611/login/login-test")
+    const hit = fx.seen.find((r) => r.url === "/v1/login")
+    assert.equal(hit.method, "POST")
+    assert.equal(hit.authorization, "Bearer engine-test-key")
+    assert.deepEqual(JSON.parse(hit.body), { browser: chosen })
+    // Without a choice the request stays as it was, so the engine's own default is used.
+    await oauth.authorize()
+    assert.equal(fx.seen.filter((r) => r.url === "/v1/login").at(-1).body, "")
   } finally {
     await fx.close()
   }

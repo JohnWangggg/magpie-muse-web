@@ -4,10 +4,29 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, symlinkSync, writeFile
 import { rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { findBrowser, launchBrowser, sweepProfiles } from "../engine/browser.mjs"
+import { browserOptions, findBrowser, launchBrowser, sweepProfiles } from "../engine/browser.mjs"
 import { Muse } from "../engine/muse.mjs"
 
 const executable = findBrowser()
+
+test("sign-in choices list installed browsers once and keep MUSE_WEB_CHROME first", () => {
+  const env = {
+    PROGRAMFILES: "C:\\Program Files",
+    "PROGRAMFILES(X86)": "C:\\Program Files (x86)",
+    LOCALAPPDATA: "C:\\Users\\x\\AppData\\Local",
+    MUSE_WEB_CHROME: "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+  }
+  const installed = new Set([
+    env.MUSE_WEB_CHROME,
+    "C:\\Users\\x\\AppData\\Local\\Chromium\\Application\\chrome.exe",
+  ])
+  const exists = (file) => installed.has(file)
+  const choices = browserOptions(env, "win32", exists)
+  assert.deepEqual(choices, [
+    { label: "MUSE_WEB_CHROME（Microsoft Edge）", value: env.MUSE_WEB_CHROME },
+    { label: "Chromium", value: "C:\\Users\\x\\AppData\\Local\\Chromium\\Application\\chrome.exe" },
+  ])
+})
 
 test("a browser left in the legacy profile cannot block a new engine", { skip: !executable, timeout: 30_000 }, async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "mw-recovery-"))
