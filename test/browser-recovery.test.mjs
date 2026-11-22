@@ -4,10 +4,53 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, symlinkSync, writeFile
 import { rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { findBrowser, launchBrowser, sweepProfiles } from "../engine/browser.mjs"
+import { browserCandidates, browserOptions, findBrowser, launchBrowser, sweepProfiles } from "../engine/browser.mjs"
 import { Muse } from "../engine/muse.mjs"
 
 const executable = findBrowser()
+
+test("sign-in choices list installed browsers once and keep MUSE_WEB_CHROME first", () => {
+  const env = {
+    PROGRAMFILES: "C:\\Program Files",
+    "PROGRAMFILES(X86)": "C:\\Program Files (x86)",
+    LOCALAPPDATA: "C:\\Users\\x\\AppData\\Local",
+    MUSE_WEB_CHROME: "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+  }
+  const installed = new Set([
+    env.MUSE_WEB_CHROME,
+    "C:\\Users\\x\\AppData\\Local\\Chromium\\Application\\chrome.exe",
+  ])
+  const exists = (file) => installed.has(file)
+  const choices = browserOptions(env, "win32", exists)
+  assert.deepEqual(choices, [
+    { label: "MUSE_WEB_CHROME（Microsoft Edge）", value: env.MUSE_WEB_CHROME },
+    { label: "Chromium", value: "C:\\Users\\x\\AppData\\Local\\Chromium\\Application\\chrome.exe" },
+  ])
+})
+
+test("sign-in choices name each Linux browser once, Edge included", () => {
+  const env = { PATH: "/usr/bin" }
+  // Built through browserCandidates so the paths use this host's separator; the repo's CI runs
+  // the same test on Windows, where path.join makes \usr\bin\google-chrome.
+  const candidates = browserCandidates("linux", env)
+  const by = (name) => candidates.find((file) => path.basename(file) === name)
+  const installed = new Set([
+    by("google-chrome"),
+    by("google-chrome-stable"),
+    by("chromium"),
+    by("microsoft-edge"),
+    by("brave-browser"),
+    "/opt/google/chrome/chrome",
+  ])
+  const exists = (file) => installed.has(file)
+  const choices = browserOptions(env, "linux", exists)
+  assert.deepEqual(choices, [
+    { label: "Google Chrome", value: by("google-chrome") },
+    { label: "Chromium", value: by("chromium") },
+    { label: "Microsoft Edge", value: by("microsoft-edge") },
+    { label: "Brave", value: by("brave-browser") },
+  ])
+})
 
 test("a browser left in the legacy profile cannot block a new engine", { skip: !executable, timeout: 30_000 }, async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "mw-recovery-"))

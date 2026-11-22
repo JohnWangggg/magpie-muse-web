@@ -350,6 +350,28 @@ describe("pure parts", () => {
     assert.equal(await muse.readUsage({ id: "a" }), null)
     assert.equal(opened, 1)
   })
+
+  test("sign-in hands the browser the plugin chose to the login runner", async () => {
+    const seen = []
+    const port = await freePort()
+    const logins = { start: (browser) => { seen.push(browser); return "login-1" }, status: () => null }
+    const server = createServer({ muse: {}, logins, store: { get: () => null }, key: "k", port })
+    await new Promise((r) => server.listen(port, "127.0.0.1", r))
+    try {
+      const post = (body) => fetch(`http://127.0.0.1:${port}/v1/login`, {
+        method: "POST",
+        headers: { authorization: "Bearer k", ...(body ? { "content-type": "application/json" } : {}) },
+        body,
+      })
+      assert.equal((await post(JSON.stringify({ browser: "C:\\Edge\\msedge.exe" }))).status, 200)
+      // An older caller sends no body; the runner keeps the engine's own default.
+      assert.equal((await post()).status, 200)
+      assert.deepEqual(seen, ["C:\\Edge\\msedge.exe", ""])
+    } finally {
+      server.closeAllConnections?.()
+      await new Promise((r) => server.close(r))
+    }
+  })
 })
 
 const executable = findBrowser()
@@ -651,7 +673,15 @@ describe("engine against a fake muse.ai in a real browser", { skip: executable ?
 
   test("browser sign-in stores a new account and hands back its handle", async () => {
     const before = store.count()
-    const start = await (await call("/v1/login", { account: null, method: "POST" })).json()
+    // A default that cannot start proves the path sent with the sign-in request is the one used.
+    const fallback = logins.executable
+    logins.executable = path.join(dir, "no-such-browser")
+    let start
+    try {
+      start = await (await call("/v1/login", { account: null, method: "POST", body: { browser: executable } })).json()
+    } finally {
+      logins.executable = fallback
+    }
     assert.match(start.url, /\/login\//)
     let state
     for (let i = 0; i < 60; i++) {
