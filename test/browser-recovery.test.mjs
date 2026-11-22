@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, symlinkSync, writeFile
 import { rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { browserOptions, findBrowser, launchBrowser, sweepProfiles } from "../engine/browser.mjs"
+import { browserCandidates, browserOptions, findBrowser, launchBrowser, sweepProfiles } from "../engine/browser.mjs"
 import { Muse } from "../engine/muse.mjs"
 
 const executable = findBrowser()
@@ -29,19 +29,26 @@ test("sign-in choices list installed browsers once and keep MUSE_WEB_CHROME firs
 })
 
 test("sign-in choices name each Linux browser once, Edge included", () => {
+  const env = { PATH: "/usr/bin" }
+  // Built through browserCandidates so the paths use this host's separator; the repo's CI runs
+  // the same test on Windows, where path.join makes \usr\bin\google-chrome.
+  const candidates = browserCandidates("linux", env)
+  const by = (name) => candidates.find((file) => path.basename(file) === name)
   const installed = new Set([
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
+    by("google-chrome"),
+    by("google-chrome-stable"),
+    by("chromium"),
+    by("microsoft-edge"),
+    by("brave-browser"),
     "/opt/google/chrome/chrome",
-    "/usr/bin/microsoft-edge",
-    "/usr/bin/brave-browser",
   ])
   const exists = (file) => installed.has(file)
-  const choices = browserOptions({ PATH: "/usr/bin" }, "linux", exists)
+  const choices = browserOptions(env, "linux", exists)
   assert.deepEqual(choices, [
-    { label: "Google Chrome", value: "/usr/bin/google-chrome" },
-    { label: "Microsoft Edge", value: "/usr/bin/microsoft-edge" },
-    { label: "Brave", value: "/usr/bin/brave-browser" },
+    { label: "Google Chrome", value: by("google-chrome") },
+    { label: "Chromium", value: by("chromium") },
+    { label: "Microsoft Edge", value: by("microsoft-edge") },
+    { label: "Brave", value: by("brave-browser") },
   ])
 })
 
