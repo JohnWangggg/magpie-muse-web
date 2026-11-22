@@ -28,6 +28,23 @@ test("sign-in choices list installed browsers once and keep MUSE_WEB_CHROME firs
   ])
 })
 
+test("sign-in choices name each Linux browser once, Edge included", () => {
+  const installed = new Set([
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/opt/google/chrome/chrome",
+    "/usr/bin/microsoft-edge",
+    "/usr/bin/brave-browser",
+  ])
+  const exists = (file) => installed.has(file)
+  const choices = browserOptions({ PATH: "/usr/bin" }, "linux", exists)
+  assert.deepEqual(choices, [
+    { label: "Google Chrome", value: "/usr/bin/google-chrome" },
+    { label: "Microsoft Edge", value: "/usr/bin/microsoft-edge" },
+    { label: "Brave", value: "/usr/bin/brave-browser" },
+  ])
+})
+
 test("a browser left in the legacy profile cannot block a new engine", { skip: !executable, timeout: 30_000 }, async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "mw-recovery-"))
   const opts = { executable, profileDir: path.join(root, "browser"), headless: true, proxy: "direct" }
