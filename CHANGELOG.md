@@ -1,5 +1,11 @@
 # 更新记录
 
+## 0.7.0 · 2026-11-22
+
+- 新增：本机装了多个 Chromium 系浏览器时，登录前先让你选一个；候选是本机已安装的 Chrome、Edge、Chromium、Brave，`MUSE_WEB_CHROME` 指定的仍排第一。选择只影响这一次登录窗口，日常浏览器的登录态照旧不会被使用（[#13](https://github.com/JohnWangggg/magpie-muse-web/pull/13)）。
+- 修复：Linux 上的 `microsoft-edge`、`microsoft-edge-stable` 会被标成 Google Chrome；同一个浏览器的多个可执行文件（如 `google-chrome`、`google-chrome-stable`、`/opt/google/chrome/chrome`）不再重复列出。
+- 测试：新增 Linux / Windows 路径下的浏览器选择列表用例，三平台 CI 通过。
+
 ## 0.6.1 · 2026-11-18
 
 - 新增：引擎的 `GET /v1/accounts`，返回账号 handle、名称和过期时间，不返回 cookie；供 connector 版选择账号和诊断使用。
