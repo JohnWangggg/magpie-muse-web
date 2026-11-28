@@ -58,6 +58,15 @@ test("both sign-in methods are offered, without a browser of its own", async () 
   assert.equal(typeof hooks.auth.methods[0].authorize, "function")
 })
 
+test("an engine off this machine has to be https", async () => {
+  const clear = await boot("http://10.0.0.7:18611")
+  await assert.rejects(clear.config({}), /本机回环/)
+  const secure = await boot("https://engine.example")
+  const cfg = {}
+  await secure.config(cfg)
+  assert.equal(cfg.provider["muse-web"].api, "https://engine.example/v1")
+})
+
 test("the loader forwards the account handle and engine key", async () => {
   const hooks = await boot()
   const loader = await hooks.auth.loader(async () => ({ type: "api", key: "muse-abc" }))

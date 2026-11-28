@@ -23,21 +23,20 @@
 | 读 cookie | 不读；cookie 在引擎自己的数据目录 | 引擎通过 CDP 读取并保存 |
 | 启动进程 | 不启动 | 启动引擎和 Chrome |
 | 安装 | npm 包 + 一个运行中的引擎 | 一个 npm 包，开箱即用 |
-| 适合 | 想在服务器/多 Magpie 实例间共享一个引擎；社区市场收录 | 只想在 Magpie 里点一下就用 |
+| 适合 | 引擎和 Magpie 在同一台机器上，只经本机回环连接；社区市场收录 | 只想在 Magpie 里点一下就用 |
 
 两者使用同一个 provider id `muse-web`，**不要同时安装**。
 
 ## 先运行引擎
 
-引擎在完整版的仓库里，和完整版是同一份代码：
+引擎和完整版是同一份代码，从 npm 装固定版本，不追分支：
 
 ```sh
-git clone https://github.com/JohnWangggg/magpie-muse-web.git
-cd magpie-muse-web
-node engine/main.mjs
+npm i -g magpie-muse-web@0.7.1    # 换版本时改这个号
+muse-web-engine
 ```
 
-启动后它会打印监听地址和数据目录。默认：
+`muse-web-engine` 由这个包提供（就是 `engine/main.mjs`）。启动后它会打印监听地址和数据目录。默认：
 
 ```text
 http://127.0.0.1:18611
@@ -50,6 +49,10 @@ http://127.0.0.1:18611
 | macOS | `~/Library/Application Support/muse-web/engine.key` |
 | Windows | `%APPDATA%\muse-web\engine.key` |
 | Linux | `$XDG_DATA_HOME/muse-web/engine.key`，默认 `~/.local/share/muse-web/engine.key` |
+
+引擎本来只监听 `127.0.0.1`。`MUSE_WEB_ENGINE` 也可以指向别的机器，但那时必须用 `https://`：
+明文 HTTP 只允许回环地址，connector 会拒绝连接非回环的明文地址，engine key 和账号句柄不会明文过网。
+把同一个引擎分给多台机器或多个 Magpie 实例，等于把多个网页账号放进一个账号池，不建议这样做。
 
 ## 安装和配置
 
@@ -98,7 +101,8 @@ magpie plugin login muse-web
 
 | 现象 | 处理 |
 |---|---|
-| `muse-web 引擎没有响应` | 启动 `node engine/main.mjs`，确认 `MUSE_WEB_ENGINE` 地址和端口 |
+| `muse-web 引擎没有响应` | 启动 `muse-web-engine`，确认 `MUSE_WEB_ENGINE` 地址和端口 |
+| `引擎地址必须是本机回环` | 非回环的 `MUSE_WEB_ENGINE` 改成了明文 `http://`；换成 `https://` 或改回 `127.0.0.1` |
 | `engine_key_invalid` / 401 | `MUSE_WEB_ENGINE_KEY` 与数据目录里的 `engine.key` 不一致 |
 | `account_unknown` / `session_expired` | 账号 ID 过期或引擎里已移除，重新登录 |
 | `account_busy` / `quota_spent` | 引擎返回的 429；Magpie 会换号或等重置 |
@@ -107,10 +111,19 @@ magpie plugin login muse-web
 ## English
 
 A connector edition of [magpie-muse-web](https://github.com/JohnWangggg/magpie-muse-web): it talks to a
-`muse-web` engine you run yourself over loopback HTTP. It never starts a browser, never reads cookie files
-and never spawns a process. Start the engine with `node engine/main.mjs`, set `MUSE_WEB_ENGINE` and
-`MUSE_WEB_ENGINE_KEY`, then `magpie plugin add magpie-muse-web-connector` and `magpie plugin login muse-web`.
-Use the full edition if you want the bundled engine. Same provider id (`muse-web`), so install one, not both.
+`muse-web` engine you run yourself. It never starts a browser, never reads cookie files
+and never spawns a process. Install the engine at a pinned version and run it:
+
+```sh
+npm i -g magpie-muse-web@0.7.1
+muse-web-engine
+```
+
+then set `MUSE_WEB_ENGINE` and `MUSE_WEB_ENGINE_KEY`, `magpie plugin add magpie-muse-web-connector` and
+`magpie plugin login muse-web`. The address is loopback by default; an engine on another machine must be
+`https://`, because plain HTTP is only accepted on loopback and the engine key and account handle are
+never sent over the network in the clear. Use the full edition if you want the bundled engine. Same
+provider id (`muse-web`), so install one, not both.
 
 ## 致谢
 

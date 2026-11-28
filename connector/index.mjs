@@ -18,6 +18,24 @@ function originFrom(value) {
   return String(value).trim().replace(/\/+$/, "").replace(/\/v1$/, "")
 }
 
+// A loopback address is this machine; anything else must be https, so the engine key and the
+// account handle never cross a network in the clear. One engine shared by several machines is a
+// pool of web accounts behind one key, which is why the documented setup keeps it on loopback.
+function checkedOrigin(origin) {
+  let url
+  try {
+    url = new URL(origin)
+  } catch {
+    throw new Error(`引擎地址不是有效的 URL：${origin}`)
+  }
+  const host = url.hostname.replace(/^\[|\]$/g, "")
+  const local = host === "localhost" || host === "::1" || /^127\./.test(host)
+  if (!local && url.protocol !== "https:") {
+    throw new Error(`引擎地址必须是本机回环（127.0.0.1 / localhost），或者用 https://；不向 ${origin} 明文发送 engine key 和账号句柄`)
+  }
+  return origin
+}
+
 function isOurs(input) {
   const id = input?.model?.providerID || input?.provider?.info?.id || input?.message?.model?.providerID || ""
   return id === PROVIDER || id === `${PROVIDER}-plugin`
@@ -44,13 +62,14 @@ function structured(windows) {
 
 export const MuseWebConnectorPlugin = async (_input, options) => {
   const opt = options && typeof options === "object" ? options : {}
-  const engineOrigin = () => originFrom(opt.engine || process.env.MUSE_WEB_ENGINE || DEFAULT_ENGINE)
+  const engineOrigin = () => checkedOrigin(originFrom(opt.engine || process.env.MUSE_WEB_ENGINE || DEFAULT_ENGINE))
   const engineBaseURL = () => `${engineOrigin()}/v1`
   const engineKey = () => String(opt.key ?? process.env.MUSE_WEB_ENGINE_KEY ?? "").trim()
 
   async function control(pathname, method, handle) {
+    const origin = engineOrigin()
     try {
-      return await fetch(`${engineOrigin()}${pathname}`, {
+      return await fetch(`${origin}${pathname}`, {
         method,
         headers: engineHeaders(engineKey(), handle),
         signal: AbortSignal.timeout(CONTROL_TIMEOUT_MS),

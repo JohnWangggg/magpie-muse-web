@@ -294,3 +294,17 @@ test("an unreachable engine is an error, not an expired sign-in", async () => {
   )
 })
 
+test("an engine off this machine has to be https", async () => {
+  const was = process.env.MUSE_WEB_ENGINE
+  try {
+    process.env.MUSE_WEB_ENGINE = "http://10.0.0.7:18611"
+    const clear = await MuseWebPlugin()
+    await assert.rejects(clear.auth.loader(async () => ({ type: "api", key: "acct-handle-1" })), /本机回环/)
+    process.env.MUSE_WEB_ENGINE = "https://engine.example"
+    const secure = await MuseWebPlugin()
+    const loaded = await secure.auth.loader(async () => ({ type: "api", key: "acct-handle-1" }))
+    assert.equal(loaded.baseURL, "https://engine.example/v1")
+  } finally {
+    process.env.MUSE_WEB_ENGINE = was
+  }
+})

@@ -93,16 +93,19 @@ magpie provider test muse-web          # 发一条真实的小请求，检查整
 
 ## Connector 版
 
-如果引擎需要单独运行（服务器、多 Magpie 实例、或社区市场收录的版本），用 [`connector/`](connector/README.md)：
+如果引擎要和 Magpie 分开运行（在社区市场装 connector 版，或想自己管理引擎进程），用 [`connector/`](connector/README.md)：
 
 ```sh
+npm i -g magpie-muse-web@0.7.1     # 引擎，固定版本；connector 另装
+muse-web-engine                    # 启动引擎，默认监听 127.0.0.1:18611
 magpie plugin add magpie-muse-web-connector
 export MUSE_WEB_ENGINE=http://127.0.0.1:18611
 export MUSE_WEB_ENGINE_KEY="$(cat "$HOME/Library/Application Support/muse-web/engine.key")"
 magpie plugin login muse-web
 ```
 
-Connector 不启动浏览器、不读 cookie、不 spawn 进程，只连接你自己运行的 `node engine/main.mjs`。
+Connector 不启动浏览器、不读 cookie、不 spawn 进程，只经本机回环连接你自己运行的 `muse-web-engine`。
+引擎不在本机时必须用 `https://`：明文 HTTP 只允许回环，key 和账号句柄不会明文过网。
 和完整版使用同一个 provider id `muse-web`，**不要同时安装**。
 
 ## 登录
@@ -214,7 +217,7 @@ muse.ai 没有公开上下文上限。按 128K 声明，是为了让客户端在
 | `MUSE_WEB_VERIFY_LOGIN` | 设为 `0` 时登录后不发测试消息 | 发送 |
 | `MUSE_WEB_ENGINE_PORT` | 引擎端口 | `18611` |
 | `MUSE_WEB_HOME` | 数据目录 | 见上表 |
-| `MUSE_WEB_ENGINE` | 改用自己运行的引擎地址，插件不再自己启动引擎 | 插件自带 |
+| `MUSE_WEB_ENGINE` | 改用自己运行的引擎地址，插件不再自己启动引擎；非回环地址必须 `https://` | 插件自带 |
 | `MUSE_WEB_ENGINE_KEY` | 外部引擎的 `engine.key`；配合 `MUSE_WEB_ENGINE` 使用 | 读数据目录的 `engine.key` |
 | `MUSE_WEB_SITE` | 改用别的 muse.ai 兼容站点（测试/镜像） | `https://muse.ai` |
 

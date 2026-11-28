@@ -1,5 +1,11 @@
 # 更新记录
 
+## 0.7.1 · 2026-11-29
+
+- 新增：引擎从 npm 装固定版本就能跑——`npm i -g magpie-muse-web@0.7.1` 后执行 `muse-web-engine`（包里的 `engine/main.mjs`），不再需要 `git clone` 后手动 `node engine/main.mjs`。市场里的 connector 版按这个方式安装引擎。
+- 安全：connector 和完整版只向本机回环（`127.0.0.1` / `localhost` / `::1`）发送 engine key 和账号句柄；`MUSE_WEB_ENGINE` 指向别的机器时必须用 `https://`，非回环的明文 HTTP 地址会被拒绝并在错误里点名，不再把 key 和账号句柄明文发出去。
+- 文档：connector 版删掉“服务器 / 多 Magpie 实例共享一个引擎”的建议——共享等于把多个网页账号放进一个账号池；排错表补了地址被拒的条目。
+
 ## 0.7.0 · 2026-11-22
 
 - 新增：本机装了多个 Chromium 系浏览器时，登录前先让你选一个；候选是本机已安装的 Chrome、Edge、Chromium、Brave，`MUSE_WEB_CHROME` 指定的仍排第一。选择只影响这一次登录窗口，日常浏览器的登录态照旧不会被使用（[#13](https://github.com/JohnWangggg/magpie-muse-web/pull/13)）。

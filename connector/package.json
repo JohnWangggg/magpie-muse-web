@@ -1,6 +1,6 @@
 {
   "name": "magpie-muse-web-connector",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Connect Magpie to a muse-web engine you run yourself: no browser, no cookie access, no spawned processes",
   "type": "module",
   "main": "./index.mjs",

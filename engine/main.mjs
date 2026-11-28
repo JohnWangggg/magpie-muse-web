@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // Engine process. The plugin starts it detached with Magpie's own Bun; `node main.mjs` works too.
 // Settings (all optional): MUSE_WEB_HOME, MUSE_WEB_ENGINE_PORT, MUSE_WEB_PROXY, MUSE_WEB_BROWSER
 // (headless | hidden | show), MUSE_WEB_CHROME, MUSE_WEB_SITE, MUSE_WEB_IDLE_MIN.
