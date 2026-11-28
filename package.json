@@ -6,7 +6,7 @@
   "main": "./index.mjs",
   "exports": "./index.mjs",
   "bin": {
-    "muse-web-engine": "./engine/main.mjs"
+    "muse-web-engine": "engine/main.mjs"
   },
   "files": [
     "index.mjs",
